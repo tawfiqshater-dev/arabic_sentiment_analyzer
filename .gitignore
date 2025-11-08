@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+
+# Virtual Environments
+venv/
+env/
+arabic_nlp_env/
+
+# Jupyter
+.ipynb_checkpoints
+
+# VSCode
+.vscode/
+.vs/
+
+# System files
+.DS_Store
+Thumbs.db

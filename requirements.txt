@@ -1,0 +1,14 @@
+streamlit>=1.28.0
+transformers>=4.35.0
+torch>=2.0.0
+sentencepiece>=0.1.99
+sacremoses>=0.0.53
+tokenizers>=0.15.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pandas>=2.0.0
+numpy>=1.24.0
+arabic-reshaper>=2.1.4
+python-bidi>=0.4.2
+accelerate>=0.20.0
+keybert>=0.8.0
