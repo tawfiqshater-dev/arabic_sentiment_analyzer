@@ -2,129 +2,88 @@ import streamlit as st
 import pandas as pd
 import time
 from datetime import datetime
-from transformers import pipeline
-import torch
+import requests
+import json
 from typing import List, Tuple, Optional
 import re
-import gc
 import random
 import numpy as np
-from streamlit.components.v1 import html
 
 # إعداد صفحة Streamlit
 st.set_page_config(
-    page_title="منصة تحليل المشاعر العربية - الذكية",
+    page_title="منصة الذكاء الاصطناعي العربية - السحابية",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# نظام تحليل المشاعر باستخدام CAMeL
-class SentimentAnalyzer:
+# نظام Hugging Face API
+class HuggingFaceAPI:
     def __init__(self):
-        self.model = None
-        self.model_loaded = False
-        self.model_name = "CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment"
-    
-    def load_model(self):
-        """تحميل نموذج CAMeL لتحليل المشاعر"""
-        if self.model_loaded:
-            return True
-        try:
-            with st.spinner("🔄 جاري تحميل النموذج الذكي... ⚡"):
-                self.model = pipeline(
-                    "text-classification",
-                    model=self.model_name,
-                    tokenizer=self.model_name,
-                    max_length=512,
-                    truncation=True
-                )
-                self.model_loaded = True
-                return True
-        except Exception as e:
-            st.error(f"❌ فشل في تحميل النموذج: {str(e)}")
-            return False
-    
-    def analyze_sentiment(self, text: str) -> Tuple[str, str, str, float]:
-        """تحليل المشاعر باستخدام نموذج CAMeL"""
-        if not self.model_loaded:
-            if not self.load_model():
-                return "خطأ في التحميل", "❌", "#dc3545", 0
+        self.api_token = None
+        self.api_urls = {
+            'sentiment': "https://api-inference.huggingface.co/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment",
+            'summarization': "https://api-inference.huggingface.co/models/csebuetnlp/mT5_multilingual_XLSum",
+            'keywords': "https://api-inference.huggingface.co/models/yanekyuk/bert-keyword-extractor",
+            'chat': "https://api-inference.huggingface.co/models/UBC-NLP/AraT5-base"
+        }
         
+    def set_api_token(self, token):
+        """تعيين توكن Hugging Face API"""
+        self.api_token = token
+        
+    def query_api(self, model_type, inputs, parameters=None):
+        """استدعاء Hugging Face API"""
+        if not self.api_token:
+            return None, "❌ لم يتم تعيين توكن Hugging Face API"
+            
+        headers = {"Authorization": f"Bearer {self.api_token}"}
+        payload = {"inputs": inputs}
+        if parameters:
+            payload["parameters"] = parameters
+            
         try:
-            # التحقق من طول النص
-            if len(text.strip()) < 5:
-                return "نص قصير جداً", "⚠️", "#ffc107", 0
-            elif len(text) > 2000:
-                return "نص طويل جداً", "⚠️", "#ffc107", 0
-            
-            # تحليل المشاعر
-            result = self.model(text)
-            sentiment_label = result[0]['label']
-            confidence = result[0]['score'] * 100
-            
-            # ترميز النتائج للعربية
-            sentiment_map = {
-                'positive': ('إيجابي', '😊', '#28a745'),
-                'negative': ('سلبي', '😞', '#dc3545'),
-                'neutral': ('محايد', '😐', '#ffc107'),
-                'LABEL_2': ('إيجابي', '😊', '#28a745'),
-                'LABEL_1': ('سلبي', '😞', '#dc3545'),
-                'LABEL_0': ('محايد', '😐', '#ffc107')
-            }
-            
-            arabic_sentiment, emoji, color = sentiment_map.get(
-                sentiment_label, ('غير محدد', '❓', '#666666')
+            response = requests.post(
+                self.api_urls[model_type],
+                headers=headers,
+                json=payload,
+                timeout=30
             )
             
-            return arabic_sentiment, emoji, color, confidence
-            
+            if response.status_code == 200:
+                return response.json(), None
+            elif response.status_code == 503:
+                return None, "⏳ النموذج جاري التحميل، يرجى المحاولة مرة أخرى بعد بضع ثوان"
+            else:
+                return None, f"❌ خطأ في API: {response.status_code} - {response.text}"
+                
+        except requests.exceptions.Timeout:
+            return None, "⏰ انتهت مهلة الطلب، يرجى المحاولة مرة أخرى"
         except Exception as e:
-            st.error(f"❌ خطأ في تحليل المشاعر: {str(e)}")
-            return "خطأ في التحليل", "❌", "#dc3545", 0
+            return None, f"❌ خطأ في الاتصال: {str(e)}"
 
 # نظام إدارة الحالة
-if 'analyzer' not in st.session_state:
-    st.session_state.analyzer = SentimentAnalyzer()
-if 'sentiment_input_text' not in st.session_state:
-    st.session_state.sentiment_input_text = ""
-if 'last_analysis' not in st.session_state:
-    st.session_state.last_analysis = None
-if 'analysis_history' not in st.session_state:
-    st.session_state.analysis_history = []
-if 'show_exit_modal' not in st.session_state:
-    st.session_state.show_exit_modal = False
+if 'hf_api' not in st.session_state:
+    st.session_state.hf_api = HuggingFaceAPI()
+if 'active_service' not in st.session_state:
+    st.session_state.active_service = "sentiment"
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
 if 'user_name' not in st.session_state:
     st.session_state.user_name = "الزائر الكريم"
 if 'analysis_count' not in st.session_state:
     st.session_state.analysis_count = 0
-if 'example_clicked' not in st.session_state:
-    st.session_state.example_clicked = None
-if 'text_area_key' not in st.session_state:
-    st.session_state.text_area_key = 0
+if 'api_token' not in st.session_state:
+    st.session_state.api_token = ""
 
 # دوال مساعدة
-def validate_text_length(text: str) -> Tuple[bool, str]:
+def validate_text_length(text: str, min_len=5, max_len=2000) -> Tuple[bool, str]:
     """التحقق من طول النص المناسب"""
-    if len(text.strip()) < 5:
-        return False, "النص قصير جداً. يرجى إدخال نص أطول."
-    elif len(text) > 2000:
-        return False, "النص طويل جداً. الحد الأقصى 2000 حرف."
+    if len(text.strip()) < min_len:
+        return False, f"النص قصير جداً. يرجى إدخال نص أطول من {min_len} حروف."
+    elif len(text) > max_len:
+        return False, f"النص طويل جداً. الحد الأقصى {max_len} حرف."
     return True, "النص مناسب للتحليل"
-
-def add_to_history(text: str, sentiment: str, confidence: float):
-    """إضافة التحليل إلى السجل"""
-    analysis_entry = {
-        'text': text[:100] + "..." if len(text) > 100 else text,
-        'sentiment': sentiment,
-        'confidence': confidence,
-        'timestamp': datetime.now()
-    }
-    st.session_state.analysis_history.insert(0, analysis_entry)
-    st.session_state.analysis_count += 1
-    # الحفاظ على آخر 10 تحليلات فقط
-    if len(st.session_state.analysis_history) > 10:
-        st.session_state.analysis_history = st.session_state.analysis_history[:10]
 
 def get_motivational_message():
     """رسائل تحفيزية عشوائية"""
@@ -133,28 +92,36 @@ def get_motivational_message():
         "🚀 إبداعك لا يعرف حدوداً!",
         "💡 أفكارك ستغير المستقبل!",
         "🌟 أنت مصدر إلهام للجميع!",
-        "🎯 دقتك في التحليل مذهلة!",
-        "⚡ سرعتك في التعلم مبهرة!",
-        "🧠 ذكاؤك الاصطناعي حقيقي!",
-        "🏆 أنت البطل في هذا المجال!"
+        "🎯 دقتك في التحليل مذهلة!"
     ]
     return random.choice(messages)
 
-def get_funny_loading_message():
-    """رسائل تحميل مضحكة"""
-    messages = [
-        "🦸 جاري استدعاء القوى الذكية...",
-        "🧞‍♂️ نفتح خزانة الأسرار العربية...",
-        "🔮 نقرأ مشاعرك من كرة الكريستال...",
-        "👨‍🔬 نجري تجارب ذكية في المختبر...",
-        "🕵️‍♂️ نحلل النص بدقة المباحث...",
-        "🎩 نخرج الأرنب من القبعة...",
-        "⚗️ نخلط جرعة الذكاء الاصطناعي...",
-        "🧩 نحل لغز المشاعر العربية..."
-    ]
-    return random.choice(messages)
+def simple_arabic_summarizer(text, max_sentences=3):
+    """تلخيص بسيط للنصوص العربية بدون API"""
+    sentences = re.split(r'[.!؟]', text)
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
+    
+    if len(sentences) <= max_sentences:
+        return text
+    
+    important_sentences = sorted(sentences, key=len, reverse=True)[:max_sentences]
+    return ' '.join(important_sentences)
 
-# CSS محسن مع إصلاحات للون النص في الشريط الجانبي
+def simple_keyword_extractor(text, num_keywords=5):
+    """استخراج كلمات مفتاحية بسيط للنصوص العربية"""
+    stop_words = {'في', 'من', 'إلى', 'على', 'أن', 'ما', 'هذا', 'هذه', 'كان', 'يكون'}
+    
+    words = re.findall(r'\b\w+\b', text)
+    words = [w for w in words if w not in stop_words and len(w) > 2]
+    
+    word_freq = {}
+    for word in words:
+        word_freq[word] = word_freq.get(word, 0) + 1
+    
+    sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
+    return [(word, freq/len(words)) for word, freq in sorted_words[:num_keywords]]
+
+# CSS محسن
 def inject_css():
     st.markdown("""
     <style>
@@ -163,98 +130,34 @@ def inject_css():
         text-align: right;
     }
     
-    /* إصلاح ألوان النص في الشريط الجانبي */
-    .css-1d391kg, .css-1lcbmhc, .css-1outwn7 {
-        color: #2c3e50 !important;
-    }
-    
     .sidebar .sidebar-content {
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
         color: #2c3e50 !important;
     }
     
-    .sidebar .sidebar-content * {
-        color: #2c3e50 !important;
-    }
-    
-    .sidebar .sidebar-content .stMarkdown, 
-    .sidebar .sidebar-content .stTextInput,
-    .sidebar .sidebar-content .stButton button,
-    .sidebar .sidebar-content .stInfo,
-    .sidebar .sidebar-content .stSuccess,
-    .sidebar .sidebar-content .stWarning {
-        color: #2c3e50 !important;
-    }
-    
-    h1, h2, h3, h4, h5, h6 {
-        text-align: right;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        color: #2c3e50;
-    }
-    
     .stTextArea textarea {
         direction: rtl;
         text-align: right;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        line-height: 1.8;
-        font-size: 16px;
-    }
-    
-    /* تأثيرات الأنيميشن */
-    @keyframes glow {
-        0% { box-shadow: 0 0 5px #667eea; }
-        50% { box-shadow: 0 0 20px #667eea, 0 0 30px #764ba2; }
-        100% { box-shadow: 0 0 5px #667eea; }
-    }
-    
-    @keyframes float {
-        0% { transform: translateY(0px); }
-        50% { transform: translateY(-10px); }
-        100% { transform: translateY(0px); }
-    }
-    
-    @keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.05); }
-        100% { transform: scale(1); }
-    }
-    
-    @keyframes celebrate {
-        0% { transform: scale(1) rotate(0deg); }
-        25% { transform: scale(1.2) rotate(5deg); }
-        50% { transform: scale(1.3) rotate(0deg); }
-        75% { transform: scale(1.2) rotate(-5deg); }
-        100% { transform: scale(1) rotate(0deg); }
-    }
-    
-    @keyframes typewriter {
-        from { width: 0; }
-        to { width: 100%; }
     }
     
     .active-service {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         border-radius: 15px;
-        padding: 25px;
+        padding: 20px;
         margin: 10px 0;
         color: white;
         text-align: center;
-        direction: rtl;
         border: 3px solid #ffeb3b;
-        animation: glow 2s infinite, float 3s ease-in-out infinite;
-        transition: all 0.3s ease;
     }
     
-    .frozen-service {
+    .inactive-service {
         background: linear-gradient(135deg, #bdc3c7 0%, #2c3e50 100%);
         border-radius: 15px;
-        padding: 25px;
+        padding: 20px;
         margin: 10px 0;
         color: white;
         text-align: center;
-        direction: rtl;
-        opacity: 0.7;
-        transition: all 0.3s ease;
+        opacity: 0.8;
     }
     
     .result-card {
@@ -265,72 +168,37 @@ def inject_css():
         border-right: 4px solid #28a745;
         direction: rtl;
         text-align: right;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        animation: pulse 2s ease-in-out;
     }
     
-    .sentiment-positive {
-        background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-        border-right: 4px solid #28a745;
-        animation: pulse 2s ease-in-out;
-    }
-    
-    .sentiment-negative {
-        background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-        border-right: 4px solid #dc3545;
-        animation: pulse 2s ease-in-out;
-    }
-    
-    .sentiment-neutral {
-        background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-        border-right: 4px solid #ffc107;
-        animation: pulse 2s ease-in-out;
-    }
-    
-    .history-item {
-        background: white;
-        border-radius: 8px;
+    .chat-message-user {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
         padding: 15px;
-        margin: 8px 0;
-        border-right: 3px solid #3498db;
-        direction: rtl;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-        transition: transform 0.2s ease;
-    }
-    
-    .history-item:hover {
-        transform: translateX(-5px);
-    }
-    
-    .confidence-bar {
-        height: 10px;
-        background: #e9ecef;
-        border-radius: 5px;
-        margin: 5px 0;
-        overflow: hidden;
-    }
-    
-    .confidence-fill {
-        height: 100%;
-        border-radius: 5px;
-        transition: width 0.5s ease;
-    }
-    
-    .example-card {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-        border-radius: 10px;
-        padding: 15px;
+        border-radius: 15px 15px 0 15px;
         margin: 10px 0;
-        border-right: 3px solid #3498db;
         direction: rtl;
-        cursor: pointer;
-        transition: all 0.3s ease;
+        text-align: right;
     }
     
-    .example-card:hover {
-        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-        transform: translateY(-2px);
-        animation: pulse 0.5s ease-in-out;
+    .chat-message-bot {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        color: #2c3e50;
+        padding: 15px;
+        border-radius: 15px 15px 15px 0;
+        margin: 10px 0;
+        border-right: 4px solid #3498db;
+        direction: rtl;
+        text-align: right;
+    }
+    
+    .keyword-badge {
+        background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+        color: #2c3e50;
+        padding: 8px 15px;
+        border-radius: 20px;
+        margin: 5px;
+        display: inline-block;
+        font-weight: bold;
     }
     
     .stat-card {
@@ -338,168 +206,21 @@ def inject_css():
         border-radius: 10px;
         padding: 20px;
         text-align: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         border-top: 4px solid #3498db;
-        animation: float 3s ease-in-out infinite;
-    }
-    
-    .achievement-badge {
-        background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
-        border-radius: 20px;
-        padding: 10px 20px;
-        margin: 5px;
-        display: inline-block;
-        animation: glow 1.5s infinite;
-        font-weight: bold;
-    }
-    
-    .exit-modal {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: white;
-        padding: 30px;
-        border-radius: 15px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-        z-index: 1000;
-        text-align: center;
-        direction: rtl;
-        animation: pulse 0.5s ease-in-out;
-    }
-    
-    .modal-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0,0,0,0.5);
-        z-index: 999;
-    }
-    
-    .feature-highlight {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-        text-align: center;
-        animation: glow 2s infinite;
-    }
-    
-    .celebration-effect {
-        animation: celebrate 1s ease-in-out;
-        display: inline-block;
-    }
-    
-    .typewriter {
-        overflow: hidden;
-        border-right: .15em solid orange;
-        white-space: nowrap;
-        margin: 0 auto;
-        letter-spacing: .15em;
-        animation: typewriter 3.5s steps(40, end);
-    }
-    
-    .success-glow {
-        animation: glow 1s ease-in-out infinite;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
     </style>
     """, unsafe_allow_html=True)
-
-def show_exit_modal():
-    """عرض نافذة الخروج"""
-    st.markdown("""
-    <div class="modal-overlay"></div>
-    <div class="exit-modal">
-        <h2>🎯 شكراً لك على استخدام التطبيق!</h2>
-        <p>لقد قمت بتحليل <strong>{}</strong> نص بنجاح</p>
-        <p>{} 👑</p>
-        <div style="margin: 20px 0;">
-            <div class="achievement-badge">بطل الذكاء الاصطناعي</div>
-        </div>
-        <p>نتمنى لك يوماً مليئاً بالإبداع والتميز! 🚀</p>
-        <div style="margin-top: 20px;">
-            <button onclick="window.close();" style="
-                background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 25px;
-                font-size: 16px;
-                cursor: pointer;
-                margin: 5px;
-            ">إغلاق النافذة</button>
-        </div>
-    </div>
-    """.format(st.session_state.analysis_count, get_motivational_message()), unsafe_allow_html=True)
-
-def show_celebration():
-    """عرض تأثير احتفالي بديل عن البالونات"""
-    st.markdown("""
-    <div style="text-align: center; margin: 20px 0;">
-        <div class="celebration-effect">
-            <h1 style="color: #28a745;">🎉 تحليل ناجح! 🎉</h1>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# أمثلة محسنة بشكل إبداعي
-examples = [
-    {
-        "title": "✨ مثال إيجابي مبدع",
-        "text": "لقد تفاجأت بالإبداع غير المحدود في هذا المشروع! كل تفصيلة تشهد على التميز والاحترافية. الأداء يتجاوز الخيال والنتائج مبهرة حقاً. هذا إنجاز يستحق الدراسة والاحتذاء به.",
-        "type": "إيجابي"
-    },
-    {
-        "title": "😞 مثال سلبي عميق", 
-        "text": "أشعر بخيبة أمل لا توصف تجاه المستوى غير المتوقع. التقصير واضح في كل جانب والاهتمام بالتفاصيل مفقود تماماً. إنه أمر محبط ويحتاج لمراجعة شاملة وجذرية.",
-        "type": "سلبي"
-    },
-    {
-        "title": "🎭 مثال محايد متوازن",
-        "text": "الأداء العام ضمن المعدلات الطبيعية المتوقعة. هناك نقاط قوة مقابلة لنقاط تحتاج للتحسين. الوضع الحالي يمثل قاعدة مناسبة للبناء عليها مستقبلاً.",
-        "type": "محايد"
-    },
-    {
-        "title": "📱 مراجعة منتج شاملة",
-        "text": "الجهاز الجديد يجمع بين أناقة التصميم ودقة الأداء. الشاشة مبهرة والألوان زاهية، لكن البطارية تحتاج للتحسين. الكاميرا رائعة في النهار وتحتاج لدعم في الليل. السعر معقول مقارنة بالإمكانيات.",
-        "type": "مراجعة"
-    }
-]
 
 # الواجهة الرئيسية
 def main():
     inject_css()
     
-    # نافذة الخروج
-    if st.session_state.show_exit_modal:
-        show_exit_modal()
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("🏃 البقاء في التطبيق", use_container_width=True):
-                st.session_state.show_exit_modal = False
-                st.rerun()
-        with col2:
-            if st.button("🔄 إعادة التشغيل", use_container_width=True):
-                st.session_state.show_exit_modal = False
-                st.rerun()
-        with col3:
-            if st.button("🚪 إغلاق التطبيق", type="primary", use_container_width=True):
-                st.success("شكراً لك! نتمنى لك التوفيق 👑")
-                time.sleep(2)
-                st.stop()
-        return
-    
-    # معالجة النقر على الأمثلة أولاً
-    if st.session_state.get('example_clicked') is not None:
-        example_text = st.session_state.example_clicked
-        st.session_state.sentiment_input_text = example_text
-        st.session_state.example_clicked = None
-        # زيادة المفتاح لإجبار إعادة التحميل
-        st.session_state.text_area_key += 1
-        st.rerun()
+    # 🔐 تحميل التوكن تلقائياً من Secrets إذا كان متوفراً
+    if not st.session_state.api_token:
+        st.session_state.api_token = st.secrets.get("HF_TOKEN", "")
+        if st.session_state.api_token:
+            st.session_state.hf_api.set_api_token(st.session_state.api_token)
     
     # الشريط الجانبي
     with st.sidebar:
@@ -507,413 +228,447 @@ def main():
         <div style='text-align: center; direction: rtl; color: #2c3e50;'>
             <h1>🧠</h1>
             <h3>منصة الذكاء الاصطناعي العربية</h3>
-            <p>الإصدار المميز - محسّن للأجهزة المتوسطة</p>
+            <p>الإصدار السحابي - باستخدام Hugging Face API</p>
         </div>
         """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # إدخال اسم المستخدم
+        # إدخال API Token (اختياري إذا كان موجوداً في Secrets)
+        st.header("🔑 إعدادات API")
+        
+        # عرض حالة التوكن
+        if st.session_state.api_token:
+            st.success("✅ تم تحميل التوكن تلقائياً من الإعدادات")
+            if st.checkbox("🔄 تغيير التوكن"):
+                api_token = st.text_input(
+                    "Hugging Face API Token الجديد:",
+                    type="password",
+                    help="احصل على التوكن من https://huggingface.co/settings/tokens"
+                )
+                if api_token and api_token != st.session_state.api_token:
+                    st.session_state.api_token = api_token
+                    st.session_state.hf_api.set_api_token(api_token)
+                    st.success("✅ تم تحديث التوكن بنجاح!")
+        else:
+            api_token = st.text_input(
+                "Hugging Face API Token:",
+                type="password",
+                help="احصل على التوكن من https://huggingface.co/settings/tokens"
+            )
+            if api_token and api_token != st.session_state.api_token:
+                st.session_state.api_token = api_token
+                st.session_state.hf_api.set_api_token(api_token)
+                st.success("✅ تم تعيين التوكن بنجاح!")
+        
+        st.markdown("---")
         st.header("👤 الملف الشخصي")
         user_name = st.text_input("اسمك الكريم:", value=st.session_state.user_name)
         if user_name != st.session_state.user_name:
             st.session_state.user_name = user_name
-            st.success(f"مرحباً بك {user_name}! 👑")
         
         st.markdown("---")
-        st.header("🤖 معلومات النموذج")
+        st.header("🎯 اختر الخدمة")
         
-        st.info(f"""
-        **النموذج النشط:** CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment
+        service_options = {
+            "تحليل المشاعر": "sentiment",
+            "تلخيص النصوص": "summarization", 
+            "كلمات مفتاحية": "keywords",
+            "محادثة ذكية": "chat"
+        }
         
-        **المميزات:**
-        - مخصص للغة العربية
-        - دقة عالية في تحليل المشاعر
-        - مدرب على بيانات عربية متنوعة
-        - محسّن للأجهزة المتوسطة
-        """)
+        selected_service = st.radio(
+            "الخدمات:",
+            list(service_options.keys()),
+            index=list(service_options.values()).index(st.session_state.active_service)
+        )
         
-        # حالة تحميل النموذج
-        if st.session_state.analyzer.model_loaded:
-            st.success("✅ النموذج محمل وجاهز للاستخدام")
+        st.session_state.active_service = service_options[selected_service]
+        
+        st.markdown("---")
+        st.header("📊 الإحصائيات")
+        st.metric("عدد التحليلات", st.session_state.analysis_count)
+        st.metric("الخدمة النشطة", selected_service)
+        
+        if st.session_state.api_token:
+            st.success("✅ API متصل وجاهز")
         else:
-            st.warning("🔄 النموذج جاهز للتحميل عند الطلب")
-        
-        st.markdown("---")
-        st.header("📊 سجل التحليلات")
-        
-        if st.session_state.analysis_history:
-            for i, analysis in enumerate(st.session_state.analysis_history[:5]):
-                sentiment_color = {
-                    'إيجابي': '#28a745',
-                    'سلبي': '#dc3545',
-                    'محايد': '#ffc107'
-                }.get(analysis['sentiment'], '#666666')
-                
-                st.markdown(f"""
-                <div class="history-item">
-                    <div style="font-size: 0.9em; color: #666;">{analysis['timestamp'].strftime('%H:%M')}</div>
-                    <div><strong>{analysis['text']}</strong></div>
-                    <div style="color: {sentiment_color}; font-weight: bold;">{analysis['sentiment']} ({analysis['confidence']:.1f}%)</div>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("لا توجد تحليلات سابقة")
-        
-        if st.button("🗑️ مسح السجل", use_container_width=True):
-            st.session_state.analysis_history = []
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # إحصائيات المستخدم
-        st.header("🏆 إنجازاتك")
-        st.markdown(f"""
-        <div style="text-align: center;">
-            <h3>عدد التحليلات: {st.session_state.analysis_count}</h3>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.session_state.analysis_count >= 5:
-            st.markdown('<div class="achievement-badge">🦸 بطل التحليل</div>', unsafe_allow_html=True)
-        if st.session_state.analysis_count >= 10:
-            st.markdown('<div class="achievement-badge">🧠 عبقري المشاعر</div>', unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # زر الخروج
-        if st.button("🚪 خروج آمن", use_container_width=True, type="secondary"):
-            st.session_state.show_exit_modal = True
-            st.rerun()
-        
-        st.info("""
-        **💡 معلومات الإصدار:**
-        - الخدمة النشطة: تحليل المشاعر المتقدم
-        - النموذج: CAMeL المتخصص للعربية
-        - محسّن للأجهزة المتوسطة
-        - إصدار المبدعين والمبتكرين
-        """)
+            st.warning("⚠️ يرجى إدخال API Token")
 
     # المنطقة الرئيسية
-    st.title("🧠 منصة الذكاء الاصطناعي العربية - الإصدار المميز")
+    st.title("🧠 منصة الذكاء الاصطناعي العربية - الإصدار السحابي")
     
-    # رسالة ترحيب مخصصة
+    # رسالة ترحيب
     st.markdown(f"""
-    <div class="feature-highlight">
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center;'>
         <h2>مرحباً {st.session_state.user_name}! 👑</h2>
         <p>{get_motivational_message()}</p>
+        <p><small>🌐 جميع الخدمات تعمل عبر Hugging Face API - لا حاجة لتحميل النماذج محلياً</small></p>
+        {"<p><small>🔐 التوكن محمل تلقائياً من الإعدادات الآمنة</small></p>" if st.session_state.api_token else ""}
     </div>
     """, unsafe_allow_html=True)
-    
     # عرض الخدمات
     st.markdown("## 🎯 الخدمات الذكية المتاحة")
-    col1, col2, col3, col4 = st.columns(4)
+    cols = st.columns(4)
     
-    with col1:
-        st.markdown("""
-        <div class="active-service">
-            <h3>📊 تحليل المشاعر الذكي</h3>
-            <p>✅ <strong>نشط ومتقدّم</strong></p>
-            <p>نموذج CAMeL المتخصص</p>
-            <p>🧠 + الذكاء الاصطناعي</p>
-        </div>
-        """, unsafe_allow_html=True)
+    services = [
+        {"name": "تحليل المشاعر", "icon": "📊", "active": st.session_state.active_service == "sentiment"},
+        {"name": "تلخيص النصوص", "icon": "📝", "active": st.session_state.active_service == "summarization"},
+        {"name": "كلمات مفتاحية", "icon": "🔑", "active": st.session_state.active_service == "keywords"},
+        {"name": "محادثة ذكية", "icon": "💬", "active": st.session_state.active_service == "chat"}
+    ]
     
-    with col2:
-        st.markdown("""
-        <div class="frozen-service">
-            <h3>📝 تلخيص النصوص الذكي</h3>
-            <p>🔄 <strong>قيد التطوير</strong></p>
-            <p>قريباً بإذن الله</p>
-            <p>⚡ محسّن للأداء</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class="frozen-service">
-            <h3>🔑 كلمات مفتاحية ذكية</h3>
-            <p>🔄 <strong>قيد التطوير</strong></p>
-            <p>قريباً بإذن الله</p>
-            <p>🎯 دقة عالية</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown("""
-        <div class="frozen-service">
-            <h3>💬 محادثة ذكية</h3>
-            <p>🔄 <strong>قيد التطوير</strong></p>
-            <p>قريباً بإذن الله</p>
-            <p>🤖 ذكاء حوارى</p>
-        </div>
-        """, unsafe_allow_html=True)
+    for i, service in enumerate(services):
+        with cols[i]:
+            css_class = "active-service" if service["active"] else "inactive-service"
+            st.markdown(f"""
+            <div class="{css_class}">
+                <h3>{service['icon']} {service['name']}</h3>
+                <p>{"✅ نشط ومتقدّم" if service["active"] else "⚡ انقر لتفعيل"}</p>
+            </div>
+            """, unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # قسم تحليل المشاعر
-    st.header("🎯 مركز التحليل الذكي للمشاعر")
+    # منطقة الخدمات النشطة
+    active_service = st.session_state.active_service
     
-    col_input, col_examples = st.columns([2, 1])
+    if active_service == "sentiment":
+        render_sentiment_analysis()
+    elif active_service == "summarization":
+        render_text_summarization()
+    elif active_service == "keywords":
+        render_keyword_extraction()
+    elif active_service == "chat":
+        render_chat_interface()
+
+def render_sentiment_analysis():
+    """واجهة تحليل المشاعر باستخدام API"""
+    st.header("📊 تحليل المشاعر العربي عبر API")
     
-    with col_input:
-        # استخدام key ديناميكي لمربع النص
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
         text_input = st.text_area(
             "أدخل النص العربي لتحليل المشاعر:",
-            height=150,
-            placeholder="اكتب أو الصق النص العربي هنا... وسنكشف أسرار مشاعره! 🕵️‍♂️",
-            value=st.session_state.sentiment_input_text,
-            key=f"main_text_input_{st.session_state.text_area_key}",
-            help="🧠 يمكن تحليل النصوص حتى 2000 حرف باستخدام الذكاء الاصطناعي المتقدم"
+            height=120,
+            placeholder="اكتب أو الصق النص العربي هنا...",
+            help="يمكن تحليل النصوص حتى 2000 حرف"
         )
         
-        # تحديث حالة الجلسة مباشرة
-        if text_input != st.session_state.sentiment_input_text:
-            st.session_state.sentiment_input_text = text_input
-        
         if text_input:
-            col_info1, col_info2, col_info3 = st.columns(3)
-            with col_info1:
-                st.metric("📝 عدد الكلمات", len(text_input.split()))
-            with col_info2:
-                st.metric("🔤 عدد الأحرف", len(text_input))
-            with col_info3:
-                st.metric("⚡ جاهزية النموذج", "🟢 نشط" if st.session_state.analyzer.model_loaded else "🟡 جاهز")
+            st.metric("عدد الكلمات", len(text_input.split()))
+            st.metric("عدد الأحرف", len(text_input))
     
-    with col_examples:
-        st.markdown("### 💡 أمثلة ذكية جاهزة")
+    with col2:
+        st.markdown("### 💡 أمثلة سريعة")
+        examples = [
+            "لقد تفاجأت بالإبداع غير المحدود في هذا المشروع! كل تفصيلة تشهد على التميز والاحترافية.",
+            "أشعر بخيبة أمل لا توصف تجاه المستوى غير المتوقع. التقصير واضح في كل جانب.",
+            "الأداء العام ضمن المعدلات الطبيعية المتوقعة. هناك نقاط قوة مقابلة لنقاط تحتاج للتحسين."
+        ]
         
-        for example in examples:
-            # استخدام callback function للتعامل مع النقر على الأمثلة
-            if st.button(example["title"], key=f"ex_{example['title']}", use_container_width=True):
-                st.session_state.example_clicked = example["text"]
+        for i, example in enumerate(examples):
+            if st.button(f"مثال {i+1}", key=f"sent_ex_{i}", use_container_width=True):
                 st.rerun()
     
-    # زر التحليل مع تأثير خاص
-    if st.button("🚀 بدء التحليل الذكي", use_container_width=True, type="primary"):
+    if st.button("🚀 تحليل المشاعر عبر API", type="primary", use_container_width=True):
+        if not st.session_state.api_token:
+            st.error("❌ يرجى إدخال Hugging Face API Token في الشريط الجانبي")
+            return
+            
         if text_input.strip():
-            # التحقق من طول النص
             is_valid, message = validate_text_length(text_input)
             if not is_valid:
                 st.error(f"⚠️ {message}")
             else:
-                # تحليل المشاعر مع رسالة تحميل مميزة
-                with st.spinner(f"{get_funny_loading_message()}"):
-                    time.sleep(1)  # تأثير درامي بسيط
-                    sentiment, emoji, color, confidence = st.session_state.analyzer.analyze_sentiment(text_input)
-                
-                # حفظ النتائج
-                st.session_state.last_analysis = {
-                    'text': text_input,
-                    'sentiment': sentiment,
-                    'emoji': emoji,
-                    'color': color,
-                    'confidence': confidence
-                }
-                
-                # إضافة إلى السجل
-                add_to_history(text_input, sentiment, confidence)
-                
-                # عرض تأثير احتفالي بديل عن البالونات
-                show_celebration()
-                st.success(f"✅ تم التحليل بنجاح! {get_motivational_message()}")
-                
-                # تحديد فئة النتيجة للتنسيق
-                sentiment_class = {
-                    'إيجابي': 'sentiment-positive',
-                    'سلبي': 'sentiment-negative', 
-                    'محايد': 'sentiment-neutral'
-                }.get(sentiment, 'result-card')
-                
-                # عرض النتيجة الرئيسية
+                with st.spinner("🔄 جاري تحليل المشاعر عبر API..."):
+                    result, error = st.session_state.hf_api.query_api('sentiment', text_input)
+                    
+                    if error:
+                        st.error(error)
+                    else:
+                        try:
+                            sentiment_data = result[0]
+                            sentiment_label = sentiment_data['label']
+                            confidence = sentiment_data['score'] * 100
+                            
+                            sentiment_map = {
+                                'positive': ('إيجابي', '😊', '#28a745'),
+                                'negative': ('سلبي', '😞', '#dc3545'), 
+                                'neutral': ('محايد', '😐', '#ffc107'),
+                                'LABEL_2': ('إيجابي', '😊', '#28a745'),
+                                'LABEL_1': ('سلبي', '😞', '#dc3545'),
+                                'LABEL_0': ('محايد', '😐', '#ffc107')
+                            }
+                            
+                            arabic_sentiment, emoji, color = sentiment_map.get(
+                                sentiment_label, ('غير محدد', '❓', '#666666')
+                            )
+                            
+                            st.session_state.analysis_count += 1
+                            
+                            st.success(f"✅ تم التحليل بنجاح عبر API! الثقة: {confidence:.1f}%")
+                            
+                            st.markdown(f"""
+                            <div class="result-card">
+                                <div style="text-align: center;">
+                                    <span style="font-size: 3em;">{emoji}</span>
+                                    <h2 style="color: {color};">{arabic_sentiment}</h2>
+                                    <p style="font-size: 1.2em; color: {color};">مستوى الثقة: {confidence:.1f}%</p>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                        except Exception as e:
+                            st.error(f"❌ خطأ في معالجة النتيجة: {str(e)}")
+
+def render_text_summarization():
+    """واجهة تلخيص النصوص باستخدام API"""
+    st.header("📝 تلخيص النصوص العربي عبر API")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        text_input = st.text_area(
+            "أدخل النص العربي لتلخيصه:",
+            height=150,
+            placeholder="الصق النص الطويل هنا...",
+            help="يمكن تلخيص النصوص حتى 2000 حرف"
+        )
+        
+        if text_input:
+            st.metric("عدد الكلمات قبل التلخيص", len(text_input.split()))
+    
+    with col2:
+        st.markdown("### ⚙️ إعدادات التلخيص")
+        summary_length = st.slider("طول الملخص:", 50, 300, 150)
+        st.info("الطول الأمثل: 150 كلمة")
+    
+    if st.button("🎯 توليد الملخص عبر API", type="primary", use_container_width=True):
+        if not st.session_state.api_token:
+            st.error("❌ يرجى إدخال Hugging Face API Token في الشريط الجانبي")
+            return
+            
+        if text_input.strip():
+            is_valid, message = validate_text_length(text_input, min_len=100)
+            if not is_valid:
+                st.error(f"⚠️ {message}")
+            else:
+                with st.spinner("🔄 جاري تلخيص النص عبر API..."):
+                    parameters = {
+                        "max_length": summary_length,
+                        "min_length": 40,
+                        "do_sample": False
+                    }
+                    
+                    result, error = st.session_state.hf_api.query_api('summarization', text_input, parameters)
+                    
+                    if error:
+                        st.error(f"{error} - جاري استخدام التلخيص البسيط...")
+                        summary = simple_arabic_summarizer(text_input)
+                        st.info("ℹ️ استخدام التلخيص البسيط (API غير متوفر)")
+                    else:
+                        try:
+                            summary = result[0]['summary_text']
+                        except:
+                            summary = simple_arabic_summarizer(text_input)
+                            st.info("ℹ️ استخدام التلخيص البسيط (استجابة API غير متوقعة)")
+                    
+                    st.session_state.analysis_count += 1
+                    st.success("✅ تم التلخيص بنجاح!")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.subheader("📄 النص الأصلي")
+                        st.info(f"الطول: {len(text_input.split())} كلمة")
+                        st.text_area("", text_input, height=200, key="original_text", label_visibility="collapsed")
+                    
+                    with col2:
+                        st.subheader("📝 الملخص المولد")
+                        st.success(f"الطول: {len(summary.split())} كلمة")
+                        st.text_area("", summary, height=200, key="summary_text", label_visibility="collapsed")
+
+def render_keyword_extraction():
+    """واجهة استخراج الكلمات المفتاحية باستخدام API"""
+    st.header("🔑 استخراج الكلمات المفتاحية عبر API")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        text_input = st.text_area(
+            "أدخل النص العربي لاستخراج الكلمات المفتاحية:",
+            height=120,
+            placeholder="أدخل النص هنا...",
+            help="يمكن معالجة النصوص حتى 2000 حرف"
+        )
+        
+        if text_input:
+            st.metric("عدد الكلمات", len(text_input.split()))
+    
+    with col2:
+        st.markdown("### ⚙️ الإعدادات")
+        num_keywords = st.slider("عدد الكلمات المفتاحية:", 3, 10, 5)
+    
+    if st.button("🎯 استخراج الكلمات عبر API", type="primary", use_container_width=True):
+        if not st.session_state.api_token:
+            st.error("❌ يرجى إدخال Hugging Face API Token في الشريط الجانبي")
+            return
+            
+        if text_input.strip():
+            is_valid, message = validate_text_length(text_input)
+            if not is_valid:
+                st.error(f"⚠️ {message}")
+            else:
+                with st.spinner("🔄 جاري استخراج الكلمات المفتاحية عبر API..."):
+                    # محاولة استخدام API أولاً
+                    result, error = st.session_state.hf_api.query_api('keywords', text_input)
+                    
+                    if error or not result:
+                        st.info("ℹ️ استخدام الاستخراج البسيط (API غير متوفر)")
+                        keywords = simple_keyword_extractor(text_input, num_keywords)
+                    else:
+                        try:
+                            # محاولة تفسير استجابة API
+                            if isinstance(result, list) and len(result) > 0:
+                                keywords = [(item.get('word', ''),
+                                           item.get('score', 0.5)) 
+                                          for item in result[:num_keywords]]
+                            else:
+                                keywords = simple_keyword_extractor(text_input, num_keywords)
+                                st.info("ℹ️ استخدام الاستخراج البسيط (استجابة API غير متوقعة)")
+                        except:
+                            keywords = simple_keyword_extractor(text_input, num_keywords)
+                            st.info("ℹ️ استخدام الاستخراج البسيط (خطأ في معالجة API)")
+                    
+                    st.session_state.analysis_count += 1
+                    st.success("✅ تم الاستخراج بنجاح!")
+                    
+                    st.subheader("🏷️ الكلمات المفتاحية المستخرجة")
+                    
+                    for keyword, score in keywords:
+                        st.markdown(f'<div class="keyword-badge">{keyword} (ثقة: {score:.2f})</div>', 
+                                  unsafe_allow_html=True)
+
+def render_chat_interface():
+    """واجهة المحادثة الذكية باستخدام API"""
+    st.header("💬 محادثة ذكية عربية عبر API")
+    
+    # عرض سجل المحادثة
+    st.subheader("📝 سجل المحادثة")
+    chat_container = st.container()
+    with chat_container:
+        for message in st.session_state.chat_history[-8:]:
+            if message['role'] == 'user':
                 st.markdown(f"""
-                <div class="result-card {sentiment_class}">
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <span style="font-size: 3em;" class="celebration-effect">{emoji}</span>
-                        <h2 style="color: {color}; margin: 10px 0;" class="typewriter">النتيجة: {sentiment}</h2>
-                    </div>
-                    
-                    <div style="background: white; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                            <span>🎯 مستوى الثقة:</span>
-                            <span style="font-weight: bold; color: {color};">{confidence:.1f}%</span>
-                        </div>
-                        <div class="confidence-bar">
-                            <div class="confidence-fill" style="width: {confidence}%; background: {color};"></div>
-                        </div>
-                    </div>
-                    
-                    <div style="background: white; padding: 15px; border-radius: 8px;">
-                        <strong>📄 النص المدخل:</strong><br>
-                        {text_input}
-                    </div>
+                <div class="chat-message-user">
+                    <strong>👤 أنت:</strong><br>
+                    {message['content']}
                 </div>
                 """, unsafe_allow_html=True)
-                
-                # إحصائيات إضافية
-                col_stat1, col_stat2, col_stat3 = st.columns(3)
-                
-                with col_stat1:
-                    st.markdown(f"""
-                    <div class="stat-card success-glow">
-                        <h3>🎯 مستوى الثقة</h3>
-                        <h2 style="color: {color};">{confidence:.1f}%</h2>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                with col_stat2:
-                    st.markdown(f"""
-                    <div class="stat-card success-glow">
-                        <h3>📊 الحالة</h3>
-                        <h2 style="color: {color};">{sentiment}</h2>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                with col_stat3:
-                    st.markdown(f"""
-                    <div class="stat-card success-glow">
-                        <h3>🧠 النموذج</h3>
-                        <h2 style="color: #3498db;">CAMeL الذكي</h2>
-                    </div>
-                    """, unsafe_allow_html=True)
-        else:
-            st.warning("⚠️ يرجى إدخال نص لتحليل مشاعره")
+            else:
+                st.markdown(f"""
+                <div class="chat-message-bot">
+                    <strong>🤖 المساعد الذكي:</strong><br>
+                    {message['content']}
+                </div>
+                """, unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # قسم تفسير النتائج
-    if st.session_state.last_analysis:
-        st.header("📈 مركز التفسير الذكي")
-        analysis = st.session_state.last_analysis
-        sentiment = analysis['sentiment']
-        confidence = analysis['confidence']
+    # إدخال الرسالة
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        user_input = st.text_input(
+            "اكتب رسالتك هنا:",
+            placeholder="اسألني عن أي شيء باللغة العربية...",
+            key="chat_input"
+        )
+    
+    with col2:
+        st.markdown("")
+        st.markdown("")
+        send_button = st.button("🚀 إرسال", use_container_width=True)
+    
+    if send_button and user_input.strip():
+        if not st.session_state.api_token:
+            st.error("❌ يرجى إدخال Hugging Face API Token في الشريط الجانبي")
+            return
         
-        if sentiment == "إيجابي":
-            st.info(f"""
-            **🎉 النتيجة إيجابية!** (ثقة: {confidence:.1f}%)
-            
-            **🧠 التفسير الذكي:** 
-            النص يعبر عن مشاعر إيجابية قوية تشير إلى الرضا والسعادة والإعجاب. 
-            هذا يدل على تجربة ناجحة أو انطباع ممتاز.
-            
-            **💫 المؤشرات:**
-            - كلمات إيجابية ومتفائلة
-            - تراكيب تعبيرية مشجعة
-            - تقييمات إيجابية واضحة
-            """)
-        elif sentiment == "سلبي":
-            st.error(f"""
-            **😔 النتيجة سلبية** (ثقة: {confidence:.1f}%)
-            
-            **🧠 التفسير الذكي:**
-            النص يعبر عن مشاعر سلبية تشير إلى الاستياء أو خيبة الأمل.
-            هذا يدل على تجربة غير مرضية تحتاج للتحسين.
-            
-            **💫 المؤشرات:**
-            - كلمات سلبية وناقدة
-            - تراكيب تعبيرية محبطة
-            - شكاوى وملاحظات سلبية
-            """)
-        else:  # محايد
-            st.warning(f"""
-            **😐 النتيجة محايدة** (ثقة: {confidence:.1f}%)
-            
-            **🧠 التفسير الذكي:**
-            النص يعبر عن موقف متوازن دون مشاعر قوية.
-            هذا يدل على تقييم موضوعي أو وصف واقعي.
-            
-            **💫 المؤشرات:**
-            - لغة وصفية محايدة
-            - تقييمات متوازنة
-            - معلومات واقعية
-            """)
+        # إضافة رسالة المستخدم للسجل
+        st.session_state.chat_history.append({
+            'role': 'user',
+            'content': user_input,
+            'timestamp': datetime.now()
+        })
+        
+        # توليد الرد باستخدام API
+        with st.spinner("🔄 جاري توليد الرد عبر API..."):
+            try:
+                # استخدام نموذج المحادثة عبر API
+                prompt = f"المستخدم: {user_input}\nالمساعد:"
+                result, error = st.session_state.hf_api.query_api('chat', prompt)
+                
+                if error:
+                    # استخدام ردود مبرمجة إذا فشل API
+                    arabic_responses = [
+                        "مرحباً بك! أنا مساعد ذكي متخصص في اللغة العربية. كيف يمكنني مساعدتك؟",
+                        "شكراً لسؤالك! أنا هنا لمساعدتك في أي استفسار باللغة العربية.",
+                        "أهلاً وسهلاً! يمكنني الإجابة على أسئلتك وتحليل النصوص العربية.",
+                        "سعيد بتواصلك معي! ما الذي تريد أن تعرفه عن الذكاء الاصطناعي واللغة العربية؟",
+                        "أهلاً! أنا جاهز للإجابة على استفساراتك باللغة العربية."
+                    ]
+                    assistant_response = random.choice(arabic_responses)
+                    st.info("ℹ️ استخدام الردود المبرمجة (API غير متوفر)")
+                else:
+                    try:
+                        assistant_response = result[0]['generated_text']
+                        # تنظيف الرد إذا لزم الأمر
+                        if "المساعد:" in assistant_response:
+                            assistant_response = assistant_response.split("المساعد:")[-1].strip()
+                    except:
+                        arabic_responses = [
+                            "أفهم سؤالك! هل يمكنك توضيح المزيد؟",
+                            "هذا موضوع مثير للاهتمام! هل لديك أسئلة أخرى؟",
+                            "شكراً على سؤالك! هل تريد معرفة المزيد عن هذا الموضوع؟"
+                        ]
+                        assistant_response = random.choice(arabic_responses)
+                        st.info("ℹ️ استخدام الردود المبرمجة (استجابة API غير متوقعة)")
+                
+                # إضافة رد المساعد للسجل
+                st.session_state.chat_history.append({
+                    'role': 'assistant',
+                    'content': assistant_response,
+                    'timestamp': datetime.now()
+                })
+                
+                st.session_state.analysis_count += 1
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ خطأ في المحادثة: {str(e)}")
     
-    st.markdown("---")
+    # أزرار تحكم إضافية
+    col1, col2 = st.columns(2)
     
-    # قسم الإنجازات
-    st.header("🏆 لوحة الإنجازات الذكية")
-    
-    col_ach1, col_ach2, col_ach3 = st.columns(3)
-    
-    with col_ach1:
-        st.markdown(f"""
-        <div class="stat-card">
-            <h3>📈 إجمالي التحليلات</h3>
-            <h1 style="color: #3498db;">{st.session_state.analysis_count}</h1>
-            <p>تحليل حتى الآن</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_ach2:
-        efficiency = min(st.session_state.analysis_count * 10, 100)
-        st.markdown(f"""
-        <div class="stat-card">
-            <h3>⚡ كفاءة المستخدم</h3>
-            <h1 style="color: #e74c3c;">{efficiency}%</h1>
-            <p>مستوى متقدم</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_ach3:
-        st.markdown(f"""
-        <div class="stat-card">
-            <h3>🎯 الدقة المتوقعة</h3>
-            <h1 style="color: #27ae60;">95%</h1>
-            <p>دقة النموذج</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # شارات الإنجازات
-    st.subheader("🎖️ شارات إنجازاتك")
-    achievement_cols = st.columns(4)
-    
-    with achievement_cols[0]:
-        if st.session_state.analysis_count >= 1:
-            st.markdown('<div class="achievement-badge">🎯 مبتدئ</div>', unsafe_allow_html=True)
-    
-    with achievement_cols[1]:
-        if st.session_state.analysis_count >= 3:
-            st.markdown('<div class="achievement-badge">🚀 محترف</div>', unsafe_allow_html=True)
-    
-    with achievement_cols[2]:
-        if st.session_state.analysis_count >= 5:
-            st.markdown('<div class="achievement-badge">🧠 خبير</div>', unsafe_allow_html=True)
-    
-    with achievement_cols[3]:
-        if st.session_state.analysis_count >= 10:
-            st.markdown('<div class="achievement-badge">🏆 أسطورة</div>', unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # أزرار إضافية للتحكم
-    st.header("⚙️ أدوات التحكم")
-    col_control1, col_control2, col_control3 = st.columns(3)
-    
-    with col_control1:
-        if st.button("🔄 تحديث الصفحة", use_container_width=True):
+    with col1:
+        if st.button("🗑️ مسح المحادثة", use_container_width=True):
+            st.session_state.chat_history = []
             st.rerun()
     
-    with col_control2:
-        if st.button("🧹 مسح النص", use_container_width=True):
-            st.session_state.sentiment_input_text = ""
-            st.session_state.text_area_key += 1
+    with col2:
+        if st.button("💡 اقتراح سؤال", use_container_width=True):
+            suggestions = [
+                "ما هو الذكاء الاصطناعي؟",
+                "كيف يمكنني تحسين مهاراتي؟",
+                "ما هي أحدث التقنيات في 2024؟",
+                "تكلم عن أهمية التعليم",
+                "ما هو مستقبل العمل عن بعد؟"
+            ]
+            st.session_state.chat_input = random.choice(suggestions)
             st.rerun()
-    
-    with col_control3:
-        if st.button("🚪 قائمة الخروج", use_container_width=True, type="primary"):
-            st.session_state.show_exit_modal = True
-            st.rerun()
-    
-    # تذييل الصفحة
-    st.markdown("""
-    <div style='text-align: center; color: #666; direction: rtl; padding: 20px;'>
-        <h3>🧠 منصة الذكاء الاصطناعي العربية - الإصدار المميز</h3>
-        <p>✅ <strong>الخدمة النشطة:</strong> تحليل المشاعر الذكي باستخدام CAMeL المتقدم</p>
-        <p>🚀 <strong>محسّن للأجهزة المتوسطة</strong> - أداء ممتاز مع ذاكرة 8GB</p>
-        <p>🎯 <strong>صمم خصيصاً للمبدعين والمبتكرين</strong></p>
-        <p>✨ <strong>فريق الذكاء الاصطناعي - كاك بنك</strong></p>
-    </div>
-    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

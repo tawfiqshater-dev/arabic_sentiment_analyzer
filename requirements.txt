@@ -12,3 +12,5 @@ arabic-reshaper>=2.1.4
 python-bidi>=0.4.2
 accelerate>=0.20.0
 keybert>=0.8.0
+sentence-transformers>=2.2.2
+huggingface_hub>=0.15.1
