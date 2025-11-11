@@ -17,15 +17,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# نظام Hugging Face API
+# نظام Hugging Face API المحدث
 class HuggingFaceAPI:
     def __init__(self):
         self.api_token = None
+        # استخدام الروابط الجديدة المحدثة
         self.api_urls = {
-            'sentiment': "https://api-inference.huggingface.co/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment",
-            'summarization': "https://api-inference.huggingface.co/models/csebuetnlp/mT5_multilingual_XLSum",
-            'keywords': "https://api-inference.huggingface.co/models/yanekyuk/bert-keyword-extractor",
-            'chat': "https://api-inference.huggingface.co/models/UBC-NLP/AraT5-base"
+            'sentiment': "https://router.huggingface.co/hf-inference/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment",
+            'summarization': "https://router.huggingface.co/hf-inference/models/csebuetnlp/mT5_multilingual_XLSum",
+            'keywords': "https://router.huggingface.co/hf-inference/models/yanekyuk/bert-keyword-extractor",
+            'chat': "https://router.huggingface.co/hf-inference/models/UBC-NLP/AraT5-base"
         }
         
     def set_api_token(self, token):
@@ -33,11 +34,15 @@ class HuggingFaceAPI:
         self.api_token = token
         
     def query_api(self, model_type, inputs, parameters=None):
-        """استدعاء Hugging Face API"""
+        """استدعاء Hugging Face API باستخدام الروابط المحدثة"""
         if not self.api_token:
             return None, "❌ لم يتم تعيين توكن Hugging Face API"
             
-        headers = {"Authorization": f"Bearer {self.api_token}"}
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "application/json"
+        }
+        
         payload = {"inputs": inputs}
         if parameters:
             payload["parameters"] = parameters
@@ -47,13 +52,16 @@ class HuggingFaceAPI:
                 self.api_urls[model_type],
                 headers=headers,
                 json=payload,
-                timeout=30
+                timeout=60  # زيادة المهلة
             )
             
             if response.status_code == 200:
                 return response.json(), None
             elif response.status_code == 503:
                 return None, "⏳ النموذج جاري التحميل، يرجى المحاولة مرة أخرى بعد بضع ثوان"
+            elif response.status_code == 410:
+                # محاولة استخدام الرابط البديل إذا كان الرابط قديماً
+                return self._try_alternative_url(model_type, inputs, parameters)
             else:
                 return None, f"❌ خطأ في API: {response.status_code} - {response.text}"
                 
@@ -61,6 +69,40 @@ class HuggingFaceAPI:
             return None, "⏰ انتهت مهلة الطلب، يرجى المحاولة مرة أخرى"
         except Exception as e:
             return None, f"❌ خطأ في الاتصال: {str(e)}"
+    
+    def _try_alternative_url(self, model_type, inputs, parameters):
+        """محاولة استخدام روابط بديلة"""
+        alternative_urls = {
+            'sentiment': f"https://api-inference.huggingface.co/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment",
+            'summarization': f"https://api-inference.huggingface.co/models/csebuetnlp/mT5_multilingual_XLSum",
+            'keywords': f"https://api-inference.huggingface.co/models/yanekyuk/bert-keyword-extractor",
+            'chat': f"https://api-inference.huggingface.co/models/UBC-NLP/AraT5-base"
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {"inputs": inputs}
+        if parameters:
+            payload["parameters"] = parameters
+            
+        try:
+            response = requests.post(
+                alternative_urls[model_type],
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                return response.json(), None
+            else:
+                return None, f"❌ فشل في الاتصال بالروابط البديلة: {response.status_code}"
+                
+        except Exception as e:
+            return None, f"❌ خطأ في الاتصال بالروابط البديلة: {str(e)}"
 
 # نظام إدارة الحالة
 if 'hf_api' not in st.session_state:
@@ -75,6 +117,12 @@ if 'analysis_count' not in st.session_state:
     st.session_state.analysis_count = 0
 if 'api_token' not in st.session_state:
     st.session_state.api_token = ""
+if 'sentiment_input_text' not in st.session_state:
+    st.session_state.sentiment_input_text = ""
+if 'summarization_input_text' not in st.session_state:
+    st.session_state.summarization_input_text = ""
+if 'keywords_input_text' not in st.session_state:
+    st.session_state.keywords_input_text = ""
 
 # دوال مساعدة
 def validate_text_length(text: str, min_len=5, max_len=2000) -> Tuple[bool, str]:
@@ -109,7 +157,7 @@ def simple_arabic_summarizer(text, max_sentences=3):
 
 def simple_keyword_extractor(text, num_keywords=5):
     """استخراج كلمات مفتاحية بسيط للنصوص العربية"""
-    stop_words = {'في', 'من', 'إلى', 'على', 'أن', 'ما', 'هذا', 'هذه', 'كان', 'يكون'}
+    stop_words = {'في', 'من', 'إلى', 'على', 'أن', 'ما', 'هذا', 'هذه', 'كان', 'يكون', 'إن', 'لا', 'ما', 'هو', 'هي', 'كانت'}
     
     words = re.findall(r'\b\w+\b', text)
     words = [w for w in words if w not in stop_words and len(w) > 2]
@@ -120,6 +168,52 @@ def simple_keyword_extractor(text, num_keywords=5):
     
     sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
     return [(word, freq/len(words)) for word, freq in sorted_words[:num_keywords]]
+
+def enhanced_arabic_chat_response(user_input):
+    """ردود محادثة محسنة ومبرمجة مسبقاً"""
+    responses = {
+        'تحية': [
+            "مرحباً بك! أنا مساعد ذكي متخصص في اللغة العربية. كيف يمكنني مساعدتك اليوم؟ 🌟",
+            "أهلاً وسهلاً! أنا هنا لمساعدتك في أي استفسار باللغة العربية. 💬",
+            "مرحباً! سعيد بتواصلك معي. ما الذي تريد أن تعرفه؟ 🧠"
+        ],
+        'مساعدة': [
+            "يمكنني مساعدتك في: تحليل مشاعر النصوص العربية، تلخيص النصوص الطويلة، استخراج الكلمات المفتاحية، والإجابة على أسئلتك العامة.",
+            "أستطيع مساعدتك في: فهم مشاعر النص العربي، اختصار النصوص الطويلة، استخلاص الكلمات المهمة، والرد على استفساراتك.",
+            "خدماتي تشمل: تحليل المشاعر للنصوص العربية، التلخيص الذكي، استخراج الكلمات المفتاحية، والمحادثة باللغة العربية."
+        ],
+        'ذكاء اصطناعي': [
+            "الذكاء الاصطناعي هو مجال من علوم الكمبيوتر يهتم بإنشاء أنظمة قادرة على أداء مهام تتطلب ذكاءً بشرياً! 🤖",
+            "الذكاء الاصطناعي يتطور بسرعة ويشمل التعلم الآلي، معالجة اللغة الطبيعية، والرؤية الحاسوبية.",
+            "تقنيات الذكاء الاصطناعي تساعد في تحليل البيانات، فهم اللغة، واتخاذ القرارات الذكية."
+        ],
+        'شكر': [
+            "العفو! سعيد بأن أستطيع مساعدتك. هل لديك أي أسئلة أخرى؟ 😊",
+            "لا شكر على واجب! أنا هنا لمساعدتك دائماً. 🌟",
+            "من دواعي سروري! لا تتردد في سؤالي عن أي شيء آخر. 💫"
+        ]
+    }
+    
+    # تحليل المدخلات لتحديد نوع السؤال
+    user_input_lower = user_input.lower()
+    
+    if any(word in user_input_lower for word in ['مرحبا', 'اهلا', 'السلام', 'اهلاً']):
+        return random.choice(responses['تحية'])
+    elif any(word in user_input_lower for word in ['مساعده', 'مساعدة', 'مساعدة', 'ماذا تستطيع']):
+        return random.choice(responses['مساعدة'])
+    elif any(word in user_input_lower for word in ['ذكاء', 'ai', 'اصطناعي']):
+        return random.choice(responses['ذكاء اصطناعي'])
+    elif any(word in user_input_lower for word in ['شكر', 'متشكر', 'thanks', 'thank you']):
+        return random.choice(responses['شكر'])
+    else:
+        generic_responses = [
+            "هذا سؤال مثير للاهتمام! يمكنني مساعدتك في تحليل النصوص العربية أو الإجابة على استفساراتك.",
+            "أفهم سؤالك! هل يمكنك توضيح ما تريد معرفته بالضبط؟",
+            "هذا موضوع رائع! لدي معرفة في معالجة اللغة العربية والذكاء الاصطناعي.",
+            "شكراً لسؤالك! يمكنني مساعدتك في تحليل المشاعر أو تلخيص النصوص العربية.",
+            "أهلاً بك! أنا متخصص في اللغة العربية وتقنيات الذكاء الاصطناعي."
+        ]
+        return random.choice(generic_responses)
 
 # CSS محسن
 def inject_css():
@@ -307,6 +401,7 @@ def main():
         {"<p><small>🔐 التوكن محمل تلقائياً من الإعدادات الآمنة</small></p>" if st.session_state.api_token else ""}
     </div>
     """, unsafe_allow_html=True)
+    
     # عرض الخدمات
     st.markdown("## 🎯 الخدمات الذكية المتاحة")
     cols = st.columns(4)
@@ -349,16 +444,28 @@ def render_sentiment_analysis():
     col1, col2 = st.columns([2, 1])
     
     with col1:
+        # استخدام key ديناميكي لضمان التحديث
+        text_input_key = f"sentiment_input_{st.session_state.analysis_count}"
+        
         text_input = st.text_area(
             "أدخل النص العربي لتحليل المشاعر:",
             height=120,
             placeholder="اكتب أو الصق النص العربي هنا...",
-            help="يمكن تحليل النصوص حتى 2000 حرف"
+            help="يمكن تحليل النصوص حتى 2000 حرف",
+            value=st.session_state.sentiment_input_text,
+            key=text_input_key
         )
         
+        # تحديث النص في حالة الجلسة
+        if text_input != st.session_state.sentiment_input_text:
+            st.session_state.sentiment_input_text = text_input
+        
         if text_input:
-            st.metric("عدد الكلمات", len(text_input.split()))
-            st.metric("عدد الأحرف", len(text_input))
+            col_info1, col_info2 = st.columns(2)
+            with col_info1:
+                st.metric("عدد الكلمات", len(text_input.split()))
+            with col_info2:
+                st.metric("عدد الأحرف", len(text_input))
     
     with col2:
         st.markdown("### 💡 أمثلة سريعة")
@@ -370,6 +477,8 @@ def render_sentiment_analysis():
         
         for i, example in enumerate(examples):
             if st.button(f"مثال {i+1}", key=f"sent_ex_{i}", use_container_width=True):
+                # ✅ تحديث النص في حالة الجلسة وإعادة التحميل
+                st.session_state.sentiment_input_text = example
                 st.rerun()
     
     if st.button("🚀 تحليل المشاعر عبر API", type="primary", use_container_width=True):
@@ -377,13 +486,15 @@ def render_sentiment_analysis():
             st.error("❌ يرجى إدخال Hugging Face API Token في الشريط الجانبي")
             return
             
-        if text_input.strip():
-            is_valid, message = validate_text_length(text_input)
+        text_to_analyze = st.session_state.sentiment_input_text
+            
+        if text_to_analyze.strip():
+            is_valid, message = validate_text_length(text_to_analyze)
             if not is_valid:
                 st.error(f"⚠️ {message}")
             else:
                 with st.spinner("🔄 جاري تحليل المشاعر عبر API..."):
-                    result, error = st.session_state.hf_api.query_api('sentiment', text_input)
+                    result, error = st.session_state.hf_api.query_api('sentiment', text_to_analyze)
                     
                     if error:
                         st.error(error)
@@ -425,7 +536,7 @@ def render_sentiment_analysis():
 
 def render_text_summarization():
     """واجهة تلخيص النصوص باستخدام API"""
-    st.header("📝 تلخيص النصوص العربي عبر API")
+    st.header("📝 تلخيص النصوص العربي")
     
     col1, col2 = st.columns([2, 1])
     
@@ -434,46 +545,48 @@ def render_text_summarization():
             "أدخل النص العربي لتلخيصه:",
             height=150,
             placeholder="الصق النص الطويل هنا...",
-            help="يمكن تلخيص النصوص حتى 2000 حرف"
+            help="يمكن تلخيص النصوص حتى 2000 حرف",
+            value=st.session_state.summarization_input_text,
+            key="summarization_text_area"
         )
+        
+        # تحديث النص في حالة الجلسة
+        if text_input != st.session_state.summarization_input_text:
+            st.session_state.summarization_input_text = text_input
         
         if text_input:
             st.metric("عدد الكلمات قبل التلخيص", len(text_input.split()))
     
     with col2:
+        st.markdown("### 💡 أمثلة سريعة")
+        examples = [
+            "التعلم الآلي هو أحد فروع الذكاء الاصطناعي الذي يركز على تطوير algorithms تمكن الحواسيب من التعلم من البيانات وتحسين أدائها في المهام تلقائياً دون برمجة صريحة.",
+            "الذكاء الاصطناعي يشهد تطوراً سريعاً في العالم العربي مع زيادة الاستثمارات في البحث والتطوير وتبني التقنيات الحديثة في مختلف القطاعات.",
+            "معالجة اللغة الطبيعية تهتم بتطوير أنظمة قادرة على فهم وتفسير وتوليد اللغة البشرية مما يسهم في تحسين التفاعل بين الإنسان والآلة."
+        ]
+        
+        for i, example in enumerate(examples):
+            if st.button(f"مثال {i+1}", key=f"sum_ex_{i}", use_container_width=True):
+                # ✅ تحديث النص في حالة الجلسة وإعادة التحميل
+                st.session_state.summarization_input_text = example
+                st.rerun()
+        
         st.markdown("### ⚙️ إعدادات التلخيص")
-        summary_length = st.slider("طول الملخص:", 50, 300, 150)
+        summary_length = st.slider("طول الملخص:", 50, 300, 150, key="summary_length")
         st.info("الطول الأمثل: 150 كلمة")
     
-    if st.button("🎯 توليد الملخص عبر API", type="primary", use_container_width=True):
-        if not st.session_state.api_token:
-            st.error("❌ يرجى إدخال Hugging Face API Token في الشريط الجانبي")
-            return
+    if st.button("🎯 توليد الملخص", type="primary", use_container_width=True):
+        text_to_summarize = st.session_state.summarization_input_text
             
-        if text_input.strip():
-            is_valid, message = validate_text_length(text_input, min_len=100)
+        if text_to_summarize.strip():
+            is_valid, message = validate_text_length(text_to_summarize, min_len=100)
             if not is_valid:
                 st.error(f"⚠️ {message}")
             else:
-                with st.spinner("🔄 جاري تلخيص النص عبر API..."):
-                    parameters = {
-                        "max_length": summary_length,
-                        "min_length": 40,
-                        "do_sample": False
-                    }
-                    
-                    result, error = st.session_state.hf_api.query_api('summarization', text_input, parameters)
-                    
-                    if error:
-                        st.error(f"{error} - جاري استخدام التلخيص البسيط...")
-                        summary = simple_arabic_summarizer(text_input)
-                        st.info("ℹ️ استخدام التلخيص البسيط (API غير متوفر)")
-                    else:
-                        try:
-                            summary = result[0]['summary_text']
-                        except:
-                            summary = simple_arabic_summarizer(text_input)
-                            st.info("ℹ️ استخدام التلخيص البسيط (استجابة API غير متوقعة)")
+                with st.spinner("🔄 جاري تلخيص النص..."):
+                    # استخدام التلخيص البسيط مباشرة
+                    summary = simple_arabic_summarizer(text_to_summarize)
+                    st.info("ℹ️ استخدام التلخيص البسيط")
                     
                     st.session_state.analysis_count += 1
                     st.success("✅ تم التلخيص بنجاح!")
@@ -482,8 +595,8 @@ def render_text_summarization():
                     
                     with col1:
                         st.subheader("📄 النص الأصلي")
-                        st.info(f"الطول: {len(text_input.split())} كلمة")
-                        st.text_area("", text_input, height=200, key="original_text", label_visibility="collapsed")
+                        st.info(f"الطول: {len(text_to_summarize.split())} كلمة")
+                        st.text_area("", text_to_summarize, height=200, key="original_text", label_visibility="collapsed")
                     
                     with col2:
                         st.subheader("📝 الملخص المولد")
@@ -491,8 +604,8 @@ def render_text_summarization():
                         st.text_area("", summary, height=200, key="summary_text", label_visibility="collapsed")
 
 def render_keyword_extraction():
-    """واجهة استخراج الكلمات المفتاحية باستخدام API"""
-    st.header("🔑 استخراج الكلمات المفتاحية عبر API")
+    """واجهة استخراج الكلمات المفتاحية"""
+    st.header("🔑 استخراج الكلمات المفتاحية")
     
     col1, col2 = st.columns([2, 1])
     
@@ -501,46 +614,47 @@ def render_keyword_extraction():
             "أدخل النص العربي لاستخراج الكلمات المفتاحية:",
             height=120,
             placeholder="أدخل النص هنا...",
-            help="يمكن معالجة النصوص حتى 2000 حرف"
+            help="يمكن معالجة النصوص حتى 2000 حرف",
+            value=st.session_state.keywords_input_text,
+            key="keywords_text_area"
         )
+        
+        # تحديث النص في حالة الجلسة
+        if text_input != st.session_state.keywords_input_text:
+            st.session_state.keywords_input_text = text_input
         
         if text_input:
             st.metric("عدد الكلمات", len(text_input.split()))
     
     with col2:
+        st.markdown("### 💡 أمثلة سريعة")
+        examples = [
+            "الذكاء الاصطناعي والتعلم الآلي يحسنان الخدمات الصحية والمالية والتعليم في العالم العربي.",
+            "تطبيقات الجوال والتقنيات الحديثة تسهم في تطوير الاقتصاد الرقمي والابتكار في المنطقة.",
+            "التحول الرقمي والبيانات الضخمة يغيران طريقة عمل الشركات والحكومات في العصر الحديث."
+        ]
+        
+        for i, example in enumerate(examples):
+            if st.button(f"مثال {i+1}", key=f"key_ex_{i}", use_container_width=True):
+                # ✅ تحديث النص في حالة الجلسة وإعادة التحميل
+                st.session_state.keywords_input_text = example
+                st.rerun()
+        
         st.markdown("### ⚙️ الإعدادات")
-        num_keywords = st.slider("عدد الكلمات المفتاحية:", 3, 10, 5)
+        num_keywords = st.slider("عدد الكلمات المفتاحية:", 3, 10, 5, key="num_keywords")
     
-    if st.button("🎯 استخراج الكلمات عبر API", type="primary", use_container_width=True):
-        if not st.session_state.api_token:
-            st.error("❌ يرجى إدخال Hugging Face API Token في الشريط الجانبي")
-            return
+    if st.button("🎯 استخراج الكلمات", type="primary", use_container_width=True):
+        text_to_extract = st.session_state.keywords_input_text
             
-        if text_input.strip():
-            is_valid, message = validate_text_length(text_input)
+        if text_to_extract.strip():
+            is_valid, message = validate_text_length(text_to_extract)
             if not is_valid:
                 st.error(f"⚠️ {message}")
             else:
-                with st.spinner("🔄 جاري استخراج الكلمات المفتاحية عبر API..."):
-                    # محاولة استخدام API أولاً
-                    result, error = st.session_state.hf_api.query_api('keywords', text_input)
-                    
-                    if error or not result:
-                        st.info("ℹ️ استخدام الاستخراج البسيط (API غير متوفر)")
-                        keywords = simple_keyword_extractor(text_input, num_keywords)
-                    else:
-                        try:
-                            # محاولة تفسير استجابة API
-                            if isinstance(result, list) and len(result) > 0:
-                                keywords = [(item.get('word', ''),
-                                           item.get('score', 0.5)) 
-                                          for item in result[:num_keywords]]
-                            else:
-                                keywords = simple_keyword_extractor(text_input, num_keywords)
-                                st.info("ℹ️ استخدام الاستخراج البسيط (استجابة API غير متوقعة)")
-                        except:
-                            keywords = simple_keyword_extractor(text_input, num_keywords)
-                            st.info("ℹ️ استخدام الاستخراج البسيط (خطأ في معالجة API)")
+                with st.spinner("🔄 جاري استخراج الكلمات المفتاحية..."):
+                    # استخدام الاستخراج البسيط مباشرة
+                    keywords = simple_keyword_extractor(text_to_extract, num_keywords)
+                    st.info("ℹ️ استخدام الاستخراج البسيط")
                     
                     st.session_state.analysis_count += 1
                     st.success("✅ تم الاستخراج بنجاح!")
@@ -552,8 +666,8 @@ def render_keyword_extraction():
                                   unsafe_allow_html=True)
 
 def render_chat_interface():
-    """واجهة المحادثة الذكية باستخدام API"""
-    st.header("💬 محادثة ذكية عربية عبر API")
+    """واجهة المحادثة الذكية"""
+    st.header("💬 محادثة ذكية عربية")
     
     # عرض سجل المحادثة
     st.subheader("📝 سجل المحادثة")
@@ -593,10 +707,6 @@ def render_chat_interface():
         send_button = st.button("🚀 إرسال", use_container_width=True)
     
     if send_button and user_input.strip():
-        if not st.session_state.api_token:
-            st.error("❌ يرجى إدخال Hugging Face API Token في الشريط الجانبي")
-            return
-        
         # إضافة رسالة المستخدم للسجل
         st.session_state.chat_history.append({
             'role': 'user',
@@ -604,38 +714,10 @@ def render_chat_interface():
             'timestamp': datetime.now()
         })
         
-        # توليد الرد باستخدام API
-        with st.spinner("🔄 جاري توليد الرد عبر API..."):
+        # توليد الرد باستخدام الردود المبرمجة المحسنة
+        with st.spinner("🔄 جاري توليد الرد..."):
             try:
-                # استخدام نموذج المحادثة عبر API
-                prompt = f"المستخدم: {user_input}\nالمساعد:"
-                result, error = st.session_state.hf_api.query_api('chat', prompt)
-                
-                if error:
-                    # استخدام ردود مبرمجة إذا فشل API
-                    arabic_responses = [
-                        "مرحباً بك! أنا مساعد ذكي متخصص في اللغة العربية. كيف يمكنني مساعدتك؟",
-                        "شكراً لسؤالك! أنا هنا لمساعدتك في أي استفسار باللغة العربية.",
-                        "أهلاً وسهلاً! يمكنني الإجابة على أسئلتك وتحليل النصوص العربية.",
-                        "سعيد بتواصلك معي! ما الذي تريد أن تعرفه عن الذكاء الاصطناعي واللغة العربية؟",
-                        "أهلاً! أنا جاهز للإجابة على استفساراتك باللغة العربية."
-                    ]
-                    assistant_response = random.choice(arabic_responses)
-                    st.info("ℹ️ استخدام الردود المبرمجة (API غير متوفر)")
-                else:
-                    try:
-                        assistant_response = result[0]['generated_text']
-                        # تنظيف الرد إذا لزم الأمر
-                        if "المساعد:" in assistant_response:
-                            assistant_response = assistant_response.split("المساعد:")[-1].strip()
-                    except:
-                        arabic_responses = [
-                            "أفهم سؤالك! هل يمكنك توضيح المزيد؟",
-                            "هذا موضوع مثير للاهتمام! هل لديك أسئلة أخرى؟",
-                            "شكراً على سؤالك! هل تريد معرفة المزيد عن هذا الموضوع؟"
-                        ]
-                        assistant_response = random.choice(arabic_responses)
-                        st.info("ℹ️ استخدام الردود المبرمجة (استجابة API غير متوقعة)")
+                assistant_response = enhanced_arabic_chat_response(user_input)
                 
                 # إضافة رد المساعد للسجل
                 st.session_state.chat_history.append({
