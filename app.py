@@ -25,41 +25,40 @@ st.set_page_config(
 class SentimentAnalyzer:
     def __init__(self): 
         self.api_loaded = False
-        # ✅ الروابط المحدثة والمؤكدة من Hugging Face
         self.sentiment_api_url = "https://api-inference.huggingface.co/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment"
         self.summarization_api_url = "https://api-inference.huggingface.co/models/csebuetnlp/mT5_multilingual_XLSum"
         self.api_token = None
         self.wait_for_model = True
 
     def initialize_api_token(self):
-        """تهيئة API Token من مصادر متعددة"""
-        # المحاولة الأولى: من environment variable (لـ Streamlit Cloud)
+        """تهيئة API Token من مصادر آمنة فقط"""
+        # المحاولة الأولى: من Streamlit Secrets
+        try:
+            secrets_token = st.secrets.get('HUGGINGFACE_API_TOKEN')
+            if secrets_token:
+                self.api_token = secrets_token
+                self.api_loaded = True
+                st.success("✅ تم تحميل التوكن الآمن من Secrets")
+                return True
+        except Exception as e:
+            pass
+        
+        # المحاولة الثانية: من environment variable
         env_token = os.getenv('HUGGINGFACE_API_TOKEN')
         if env_token:
             self.api_token = env_token
             self.api_loaded = True
+            st.success("✅ تم تحميل التوكن الآمن من Environment Variables")
             return True
         
-        # المحاولة الثانية: من session state (للمستخدمين)
-        if hasattr(st, 'session_state') and hasattr(st.session_state, 'get'):
-            session_token = st.session_state.get('api_token', '')
-            if session_token:
-                self.api_token = session_token
-                self.api_loaded = True
-                return True
-        
+        st.error("❌ لم يتم العثور على التوكن في المصادر الآمنة")
         return False
-
-    def set_api_token(self, token: str):
-        """تعيين توكن Hugging Face API"""
-        self.api_token = token
-        self.api_loaded = True
 
     def query_huggingface_api(self, api_url: str, payload: dict, timeout: int = 120):
         """استدعاء Hugging Face API مع معالجة الأخطاء المحسنة"""
         if not self.api_token:
             if not self.initialize_api_token():
-                return {"error": "لم يتم تعيين API Token"}
+                return {"error": "لم يتم تكوين API Token بشكل آمن"}
             
         headers = {
             "Authorization": f"Bearer {self.api_token}",
@@ -67,7 +66,6 @@ class SentimentAnalyzer:
         }
         
         try:
-            # إضافة معلمات الانتظار إذا كان النموذج يحمل
             if self.wait_for_model:
                 if "parameters" not in payload:
                     payload["parameters"] = {}
@@ -78,13 +76,12 @@ class SentimentAnalyzer:
             if response.status_code == 200:
                 return response.json()
             elif response.status_code == 503:
-                # النموذج يحمل، نحاول مرة أخرى بعد وقت قصير
                 time.sleep(10)
                 response = requests.post(api_url, headers=headers, json=payload, timeout=timeout)
                 if response.status_code == 200:
                     return response.json()
                 else:
-                    return {"error": f"النموذج قيد التحميل، حاول مرة أخرى بعد قليل. الرمز: {response.status_code}"}
+                    return {"error": f"النموذج قيد التحميل، حاول مرة أخرى بعد قليل"}
             else:
                 error_msg = f"خطأ في API: {response.status_code}"
                 try:
@@ -105,28 +102,24 @@ class SentimentAnalyzer:
     def analyze_sentiment(self, text: str) -> Tuple[str, str, str, float]:
         """تحليل المشاعر باستخدام Hugging Face API"""
         if not self.api_loaded and not self.initialize_api_token():
-            return "لم يتم تعيين API Token", "❌", "#dc3545", 0
+            return "لم يتم تكوين API Token بشكل آمن", "❌", "#dc3545", 0
 
         try:
-            # التحقق من طول النص
             if len(text.strip()) < 5:
                 return "نص قصير جداً", "⚠️", "#ffc107", 0
             elif len(text) > 2000:
                 return "نص طويل جداً", "⚠️", "#ffc107", 0
 
-            # استدعاء API
             payload = {"inputs": text}
             result = self.query_huggingface_api(self.sentiment_api_url, payload, timeout=60)
             
             if 'error' in result:
                 return f"خطأ: {result['error']}", "❌", "#dc3545", 0
 
-            # معالجة النتيجة
             if isinstance(result, list) and len(result) > 0:
                 sentiment_label = result[0]['label']
                 confidence = result[0]['score'] * 100
 
-                # ترميز النتائج للعربية
                 sentiment_map = {
                     'positive': ('إيجابي', '😊', '#28a745'),
                     'negative': ('سلبي', '😞', '#dc3545'),
@@ -149,16 +142,14 @@ class SentimentAnalyzer:
     def summarize_text(self, text: str, max_length: int = 150, min_length: int = 30) -> Tuple[str, float]:
         """تلخيص النص باستخدام Hugging Face API"""
         if not self.api_loaded and not self.initialize_api_token():
-            return "لم يتم تعيين API Token", 0
+            return "لم يتم تكوين API Token بشكل آمن", 0
         
         try:
-            # التحقق من طول النص
             if len(text.strip()) < 50:
                 return "النص قصير جداً للتلخيص. يرجى إدخال نص أطول.", 0
             elif len(text) > 5000:
                 return "النص طويل جداً. الحد الأقصى 5000 حرف.", 0
 
-            # استدعاء API
             payload = {
                 "inputs": text,
                 "parameters": {
@@ -173,10 +164,8 @@ class SentimentAnalyzer:
             if 'error' in result:
                 return f"خطأ: {result['error']}", 0
 
-            # معالجة النتيجة
             if isinstance(result, list) and len(result) > 0:
                 summary = result[0]['summary_text']
-                # حساب نسبة التلخيص
                 compression_ratio = (1 - len(summary) / len(text)) * 100
                 return summary, compression_ratio
             else:
@@ -188,11 +177,10 @@ class SentimentAnalyzer:
     def check_api_status(self):
         """فحص حالة API"""
         if not self.api_loaded and not self.initialize_api_token():
-            return False, "لم يتم تعيين API Token"
+            return False, "لم يتم تكوين API Token بشكل آمن"
         
         try:
-            # فحص نموذج تحليل المشاعر
-            payload = {"inputs": "test"}
+            payload = {"inputs": "اختبار"}
             result = self.query_huggingface_api(self.sentiment_api_url, payload, timeout=30)
             
             if 'error' in result and "loading" in result['error'].lower():
@@ -230,9 +218,6 @@ if 'analysis_history' not in st.session_state:
 if 'summarization_history' not in st.session_state:
     st.session_state.summarization_history = []
 
-if 'show_exit_modal' not in st.session_state:
-    st.session_state.show_exit_modal = False
-
 if 'user_name' not in st.session_state:
     st.session_state.user_name = "الزائر الكريم"
 
@@ -248,14 +233,19 @@ if 'example_clicked' not in st.session_state:
 if 'text_area_key' not in st.session_state:
     st.session_state.text_area_key = 0
 
-if 'api_token' not in st.session_state:
-    st.session_state.api_token = ""
-
 if 'api_status' not in st.session_state:
     st.session_state.api_status = "لم يتم الفحص بعد"
 
-if 'using_env_token' not in st.session_state:
-    st.session_state.using_env_token = False
+if 'api_configured' not in st.session_state:
+    st.session_state.api_configured = False
+
+# محاولة تهيئة التوكن تلقائياً عند التحميل
+if not st.session_state.api_configured:
+    if st.session_state.analyzer.initialize_api_token():
+        st.session_state.api_configured = True
+        with st.spinner("🔍 جاري تهيئة النظام الآمن..."):
+            status, message = st.session_state.analyzer.check_api_status()
+            st.session_state.api_status = message
 
 # دوال مساعدة
 def validate_text_length(text: str, service_type: str = "sentiment") -> Tuple[bool, str]:
@@ -284,7 +274,6 @@ def add_to_history(text: str, sentiment: str, confidence: float, service_type: s
         }
         st.session_state.analysis_history.insert(0, analysis_entry)
         st.session_state.analysis_count += 1
-        # الحفاظ على آخر 10 تحليلات فقط
         if len(st.session_state.analysis_history) > 10:
             st.session_state.analysis_history = st.session_state.analysis_history[:10]
     else:  # summarization
@@ -296,7 +285,6 @@ def add_to_history(text: str, sentiment: str, confidence: float, service_type: s
         }
         st.session_state.summarization_history.insert(0, summary_entry)
         st.session_state.summarization_count += 1
-        # الحفاظ على آخر 10 تلخيصات فقط
         if len(st.session_state.summarization_history) > 10:
             st.session_state.summarization_history = st.session_state.summarization_history[:10]
 
@@ -447,10 +435,19 @@ def inject_css():
         text-align: center;
     }
     
+    .security-badge {
+        background: #28a745;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 10px;
+        text-align: center;
+        margin: 10px 0;
+        font-weight: bold;
+    }
+    
     .api-status-ready { color: #28a745; font-weight: bold; }
     .api-status-loading { color: #ffc107; font-weight: bold; }
     .api-status-error { color: #dc3545; font-weight: bold; }
-    .env-token-badge { background: #28a745; color: white; padding: 5px 10px; border-radius: 10px; font-size: 0.8em; }
     
     @keyframes glow {
         0% { box-shadow: 0 0 5px #667eea; }
@@ -512,64 +509,36 @@ summarization_examples = [
 def main():
     inject_css()
     
-    # محاولة تهيئة التوكن من environment variable تلقائياً
-    if not st.session_state.api_token:
-        env_token = os.getenv('HUGGINGFACE_API_TOKEN')
-        if env_token:
-            st.session_state.api_token = env_token
-            st.session_state.analyzer.set_api_token(env_token)
-            st.session_state.using_env_token = True
-            # فحص حالة API تلقائياً
-            with st.spinner("🔍 جاري فحص حالة النماذج تلقائياً..."):
-                status, message = st.session_state.analyzer.check_api_status()
-                st.session_state.api_status = message
-    
     # الشريط الجانبي
     with st.sidebar:
         st.markdown("""
         <div style='text-align: center; direction: rtl; color: #2c3e50;'>
             <h1>🧠</h1>
             <h3>منصة الذكاء الاصطناعي العربية</h3>
-            <p>الإصدار المميز - Hugging Face API</p>
+            <p>الإصدار الآمن - Hugging Face API</p>
         </div>
         """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # إعدادات API
-        st.header("🔑 إعدادات API")
+        # قسم الحالة الآمنة
+        st.header("🔒 حالة النظام الآمن")
         
-        # عرض حالة التوكن
-        if st.session_state.using_env_token:
-            st.markdown('<div class="env-token-badge">🔒 يستخدم التوكن الآمن من البيئة</div>', unsafe_allow_html=True)
-            st.success("✅ تم تحميل التوكن تلقائياً من الإعدادات الآمنة")
+        if st.session_state.api_configured:
+            st.markdown('<div class="security-badge">✅ النظام مُهيأ بأمان</div>', unsafe_allow_html=True)
+            st.success("تم تحميل التوكن الآمن تلقائياً")
         else:
-            api_token = st.text_input(
-                "Hugging Face API Token:",
-                type="password",
-                value=st.session_state.api_token,
-                help="احصل على API Token مجاني من huggingface.co/settings/tokens"
-            )
+            st.error("""
+            **❌ النظام غير مهيأ**
             
-            if api_token != st.session_state.api_token:
-                st.session_state.api_token = api_token
-                st.session_state.analyzer.set_api_token(api_token)
-                if api_token:
-                    st.success("✅ تم تعيين API Token بنجاح!")
-                    # فحص حالة API عند تعيين التوكن
-                    with st.spinner("🔍 جاري فحص حالة النماذج..."):
-                        status, message = st.session_state.analyzer.check_api_status()
-                        st.session_state.api_status = message
-                        if status:
-                            st.success("✅ " + message)
-                        else:
-                            st.error("❌ " + message)
-                else:
-                    st.warning("⚠️ لم يتم تعيين API Token")
+            يرجى إضافة التوكن في:
+            - Streamlit Cloud Secrets: HUGGINGFACE_API_TOKEN
+            - Environment Variables: HUGGINGFACE_API_TOKEN
+            """)
         
         # زر فحص حالة API
         if st.button("🔍 فحص حالة النماذج", use_container_width=True):
-            if st.session_state.api_token or st.session_state.using_env_token:
+            if st.session_state.api_configured:
                 with st.spinner("🔍 جاري فحص حالة النماذج..."):
                     status, message = st.session_state.analyzer.check_api_status()
                     st.session_state.api_status = message
@@ -578,7 +547,7 @@ def main():
                     else:
                         st.error("❌ " + message)
             else:
-                st.error("❌ يرجى إدخال API Token أولاً")
+                st.error("❌ النظام غير مهيأ بشكل آمن")
         
         st.markdown("---")
         
@@ -629,37 +598,46 @@ def main():
             
         st.markdown("---")
         
-        if st.button("🚪 خروج آمن", use_container_width=True):
-            st.session_state.show_exit_modal = True
+        if st.button("🔄 إعادة تشغيل التطبيق", use_container_width=True):
             st.rerun()
 
     # المنطقة الرئيسية
-    st.title("🧠 منصة الذكاء الاصطناعي العربية - Hugging Face API")
+    st.title("🧠 منصة الذكاء الاصطناعي العربية - النسخة الآمنة")
     
-    # رسالة ترحيب
+    # التحقق من تكوين API
+    if not st.session_state.api_configured:
+        st.error("""
+        ## 🔐 التكوين الأمني المطلوب
+        
+        **لحماية توكنك، يرجى إعداده في:** 
+        
+        ### 🚀 في Streamlit Cloud:
+        1. انتقل إلى إعدادات التطبيق
+        2. اختر "Secrets"  
+        3. أضف: `HUGGINGFACE_API_TOKEN = "توكنك_هنا"`
+        
+        ### 💻 محلياً:
+        عيّن متغير بيئة:
+        ```bash
+        export HUGGINGFACE_API_TOKEN="توكنك_هنا"
+        ```
+        
+        **مزايا هذه الطريقة:**
+        - ✅ التوكن غير مرئي للمستخدمين
+        - ✅ لا يمكن سرقته من الواجهة
+        - ✅ آمن للتطبيقات العامة
+        - ✅ إدارة مركزية للتوكن
+        """)
+        return
+    
+    # رسالة ترحيب للنظام الآمن
     st.markdown(f"""
     <div class="feature-highlight">
         <h2>مرحباً {st.session_state.user_name}! 👑</h2>
+        <p>✅ النظام يعمل بشكل آمن ومحمي</p>
         <p>{get_motivational_message()}</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    # التحقق من API Token
-    if not st.session_state.api_token and not st.session_state.using_env_token:
-        st.error("""
-        ## 🔑 يرجى إدخال Hugging Face API Token
-        
-        **خطوات الحصول على Token مجاني:**
-        1. انتقل إلى [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-        2. سجل الدخول أو أنشئ حساب جديد (مجاني)
-        3. انقر على "New token"
-        4. اختر "Write" كصلاحية
-        5. أدخل اسم للتوكن وانسخه
-        6. الصق التوكن في الشريط الجانبي
-        
-        **ملاحظة:** التوكن مجاني تماماً ويمكنك إجراء آلاف الاستدعاءات شهرياً.
-        """)
-        return
     
     # محول الخدمات
     st.markdown("## 🎯 اختر الخدمة الذكية")
@@ -878,14 +856,12 @@ def render_text_summarization():
 
 def display_sentiment_result(sentiment, emoji, color, confidence, text_input):
     """عرض نتيجة تحليل المشاعر"""
-    # تحديد فئة النتيجة للتنسيق
     sentiment_class = {
         'إيجابي': 'sentiment-positive',
         'سلبي': 'sentiment-negative', 
         'محايد': 'sentiment-neutral'
     }.get(sentiment, 'result-card')
     
-    # عرض النتيجة الرئيسية
     st.markdown(f"""
     <div class="result-card {sentiment_class}">
         <div style="text-align: center; margin-bottom: 20px;">
@@ -908,7 +884,6 @@ def display_sentiment_result(sentiment, emoji, color, confidence, text_input):
     </div>
     """, unsafe_allow_html=True)
     
-    # إحصائيات إضافية
     col_stat1, col_stat2, col_stat3 = st.columns(3)
     with col_stat1:
         st.markdown(f"""
@@ -934,7 +909,6 @@ def display_sentiment_result(sentiment, emoji, color, confidence, text_input):
 
 def display_summary_result(summary, compression_ratio, original_text, original_length, summary_length):
     """عرض نتيجة التلخيص"""
-    # عرض النتيجة الرئيسية
     st.markdown(f"""
     <div class="summary-card">
         <div style="text-align: center; margin-bottom: 20px;">
@@ -964,7 +938,6 @@ def display_summary_result(summary, compression_ratio, original_text, original_l
     </div>
     """, unsafe_allow_html=True)
     
-    # إحصائيات إضافية
     col_stat1, col_stat2, col_stat3 = st.columns(3)
     with col_stat1:
         st.markdown(f"""
@@ -989,7 +962,6 @@ def display_summary_result(summary, compression_ratio, original_text, original_l
         </div>
         """, unsafe_allow_html=True)
 
-    # قسم تفسير النتائج
     st.markdown("---")
     st.header("📈 مركز التفسير الذكي للتلخيص")
     
@@ -1005,11 +977,6 @@ def display_summary_result(summary, compression_ratio, original_text, original_l
     - ✅ الأفكار الرئيسية محفوظة
     - ✅ اللغة سليمة ومفهومة
     - ✅ التنسيق متناسق وواضح
-    
-    **💡 نصائح للاستخدام الأمثل:**
-    - للمقالات الطويلة، يمكن تقسيمها إلى أجزاء
-    - تأكد من وضوح النص الأصلي للحصول على أفضل نتائج
-    - استخدم إعدادات الطول المناسبة لنوع النص
     """)
 
 if __name__ == "__main__":
