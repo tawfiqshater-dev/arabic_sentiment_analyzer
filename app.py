@@ -161,8 +161,9 @@ class AutoRefreshManager:
 class SentimentAnalyzer:
     def __init__(self):
         self.api_loaded = False
-        self.sentiment_api_url = "https://api-inference.huggingface.co/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment"
-        self.summarization_api_url = "https://api-inference.huggingface.co/models/csebuetnlp/mT5_multilingual_XLSum"
+        # استخدام الروابط الجديدة المحدثة
+        self.sentiment_api_url = "https://router.huggingface.co/hf-inference/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment"
+        self.summarization_api_url = "https://router.huggingface.co/hf-inference/models/csebuetnlp/mT5_multilingual_XLSum"
         self.api_token = None
         self.wait_for_model = True
         self.logger = setup_logging()
@@ -584,7 +585,6 @@ def export_data(format_type: str = 'json'):
         return json.dumps(data, ensure_ascii=False, indent=2, default=str)
     elif format_type == 'csv':
         # تحويل إلى CSV
-        import io
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(['النص', 'المشاعر', 'الثقة', 'الوقت', 'النوع'])
@@ -1064,6 +1064,13 @@ def render_sentiment_analysis():
     """عرض واجهة تحليل المشاعر"""
     st.header("🎯 مركز التحليل الذكي للمشاعر")
     
+    # معالجة النقر على الأمثلة أولاً
+    if st.session_state.example_clicked:
+        st.session_state.sentiment_input_text = st.session_state.example_clicked
+        st.session_state.example_clicked = None
+        st.session_state.text_area_key += 1  # إعادة تحميل حقل النص
+        st.rerun()
+    
     col_input, col_examples = st.columns([2, 1])
     
     with col_input:
@@ -1098,11 +1105,6 @@ def render_sentiment_analysis():
                 st.session_state.example_clicked = example["text"]
                 st.rerun()
     
-    if st.session_state.example_clicked:
-        st.session_state.sentiment_input_text = st.session_state.example_clicked
-        st.session_state.example_clicked = None
-        st.rerun()
-    
     if st.button("🚀 بدء التحليل الذكي", use_container_width=True, type="primary"):
         if text_input.strip():
             is_valid, message = validate_text_length(text_input, "sentiment")
@@ -1135,6 +1137,13 @@ def render_sentiment_analysis():
 def render_text_summarization():
     """عرض واجهة تلخيص النصوص"""
     st.header("📝 مركز التلخيص الذكي للنصوص")
+    
+    # معالجة النقر على الأمثلة أولاً
+    if st.session_state.example_clicked:
+        st.session_state.summarization_input_text = st.session_state.example_clicked
+        st.session_state.example_clicked = None
+        st.session_state.text_area_key += 1  # إعادة تحميل حقل النص
+        st.rerun()
     
     col_input, col_examples = st.columns([2, 1])
     
@@ -1176,11 +1185,6 @@ def render_text_summarization():
             if st.button(example["title"], key=f"sum_ex_{example['title']}", use_container_width=True):
                 st.session_state.example_clicked = example["text"]
                 st.rerun()
-    
-    if st.session_state.example_clicked:
-        st.session_state.summarization_input_text = st.session_state.example_clicked
-        st.session_state.example_clicked = None
-        st.rerun()
     
     if st.button("🚀 بدء التلخيص الذكي", use_container_width=True, type="primary"):
         if text_input.strip():
