@@ -163,8 +163,8 @@ class SentimentAnalyzer:
     def __init__(self):
         self.api_loaded = False
         # استخدام الروابط الجديدة المحدثة
-        self.sentiment_api_url = "https://api-inference.huggingface.co/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment"
-        self.summarization_api_url = "https://api-inference.huggingface.co/models/csebuetnlp/mT5_multilingual_XLSum"
+        self.sentiment_api_url = "https://router.huggingface.co/hf-inference/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment"
+        self.summarization_api_url = "https://router.huggingface.co/hf-inference/models/csebuetnlp/mT5_multilingual_XLSum"
         self.api_token = None
         self.wait_for_model = True
         self.logger = setup_logging()
