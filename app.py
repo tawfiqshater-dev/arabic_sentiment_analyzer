@@ -1244,40 +1244,52 @@ def render_text_summarization():
             st.warning("⚠️ يرجى إدخال نص لتلخيصه")
 
 def display_sentiment_result(sentiment, emoji, color, confidence, text_input):
-    """عرض نتيجة تحليل المشاعر"""
+    """عرض نتيجة تحليل المشاعر بشكل صحيح"""
+    
+    # تهريب النص المدخل بشكل صحيح
+    import html as html_escape
+    text_input_escaped = html_escape.escape(text_input)
+    
+    # تحديد فئة المشاعر
     sentiment_class = {
         'إيجابي': 'sentiment-positive',
         'سلبي': 'sentiment-negative',
         'محايد': 'sentiment-neutral'
     }.get(sentiment, 'result-card')
     
-    # تهريب النص لتجنب مشاكل HTML
-    text_input_escaped = html.escape(text_input)
-    
+    # استخدام markdown للعرض الآمن
     st.markdown(f"""
     <div class="result-card {sentiment_class}">
         <div style="text-align: center; margin-bottom: 20px;">
             <span style="font-size: 3em;">{emoji}</span>
             <h2 style="color: {color}; margin: 10px 0;">النتيجة: {sentiment}</h2>
         </div>
-        
-        <div style="background: white; padding: 15px; border-radius: 8px; margin: 15px 0;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                <span>🎯 مستوى الثقة:</span>
-                <span style="font-weight: bold; color: {color};">{confidence:.1f}%</span>
-            </div>
-            <div style="height: 10px; background: #e9ecef; border-radius: 5px; overflow: hidden;">
-                <div style="height: 100%; width: {confidence}%; background: {color}; border-radius: 5px;"></div>
-            </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # عرض مستوى الثقة بشكل منفصل
+    st.markdown("#### 🎯 مستوى الثقة")
+    st.markdown(f"""
+    <div style="background: white; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <span>مستوى الثقة:</span>
+            <span style="font-weight: bold; color: {color};">{confidence:.1f}%</span>
         </div>
-        
-        <div style="background: white; padding: 15px; border-radius: 8px;">
-            <strong>📄 النص المدخل:</strong><br>
-            {text_input_escaped}
+        <div style="height: 10px; background: #e9ecef; border-radius: 5px; overflow: hidden;">
+            <div style="height: 100%; width: {confidence}%; background: {color}; border-radius: 5px;"></div>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
+    # عرض النص المدخل
+    st.markdown("#### 📄 النص المدخل")
+    st.markdown(f"""
+    <div style="background: white; padding: 15px; border-radius: 8px; direction: rtl; text-align: right; line-height: 1.8;">
+        {text_input_escaped}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # الإحصائيات في أعمدة
     col_stat1, col_stat2, col_stat3 = st.columns(3)
     
     with col_stat1:
