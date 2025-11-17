@@ -1305,39 +1305,51 @@ def display_sentiment_result(sentiment, emoji, color, confidence, text_input):
         """, unsafe_allow_html=True)
 
 def display_summary_result(summary, compression_ratio, original_text, original_length, summary_length):
-    """عرض نتيجة التلخيص"""
-    # تهريب النص الملخص لتجنب مشاكل HTML
-    summary_escaped = html.escape(summary)
+    """عرض نتيجة التلخيص مع معالجة صحيحة للنص"""
     
-    st.markdown(f"""
+    # تهريب النص الملخص بشكل صحيح لتجنب مشاكل HTML
+    import html as html_escape
+    summary_escaped = html_escape.escape(summary)
+    
+    # استخدام markdown بدلاً من HTML غير الآمن
+    st.markdown("""
     <div class="summary-card">
         <div style="text-align: center; margin-bottom: 20px;">
             <h2 style="color: #2196f3; margin: 10px 0;">التلخيص الناجح</h2>
         </div>
-        
-        <div style="background: white; padding: 15px; border-radius: 8px; margin: 15px 0;">
-            <h4 style="color: #2196f3; margin-bottom: 10px;">📋 الملخص الذكي:</h4>
-            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-right: 3px solid #2196f3;">
-                {summary_escaped}
-            </div>
-        </div>
-        
-        <div style="background: white; padding: 15px; border-radius: 8px;">
-            <strong>📊 إحصائيات التلخيص:</strong><br>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
-                <div style="text-align: center; padding: 10px; background: #e3f2fd; border-radius: 5px;">
-                    <div style="font-size: 1.2em; font-weight: bold; color: #1976d2;">{original_length}</div>
-                    <div style="font-size: 0.9em;">عدد أحرف النص الأصلي</div>
-                </div>
-                <div style="text-align: center; padding: 10px; background: #e3f2fd; border-radius: 5px;">
-                    <div style="font-size: 1.2em; font-weight: bold; color: #1976d2;">{summary_length}</div>
-                    <div style="font-size: 0.9em;">عدد أحرف الملخص</div>
-                </div>
-            </div>
-        </div>
     </div>
     """, unsafe_allow_html=True)
     
+    # عرض الملخص في منطقة منفصلة آمنة
+    st.markdown("### 📋 الملخص الذكي:")
+    st.markdown(f"""
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-right: 3px solid #2196f3; direction: rtl; text-align: right; line-height: 1.6;">
+        {summary_escaped}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # إحصائيات التلخيص
+    st.markdown("### 📊 إحصائيات التلخيص:")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"""
+        <div style="text-align: center; padding: 15px; background: #e3f2fd; border-radius: 8px; margin: 5px;">
+            <div style="font-size: 1.5em; font-weight: bold; color: #1976d2;">{original_length}</div>
+            <div style="font-size: 0.9em; color: #555;">عدد أحرف النص الأصلي</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div style="text-align: center; padding: 15px; background: #e3f2fd; border-radius: 8px; margin: 5px;">
+            <div style="font-size: 1.5em; font-weight: bold; color: #1976d2;">{summary_length}</div>
+            <div style="font-size: 0.9em; color: #555;">عدد أحرف الملخص</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # بطاقات الإحصائيات الإضافية
     col_stat1, col_stat2, col_stat3 = st.columns(3)
     
     with col_stat1:
@@ -1366,7 +1378,11 @@ def display_summary_result(summary, compression_ratio, original_text, original_l
         """, unsafe_allow_html=True)
     
     st.markdown("---")
+    
+    # تفسير النتائج
     st.header("📈 مركز التفسير الذكي للتلخيص")
+    
+    reduction_percentage = (1 - summary_length / original_length) * 100
     st.info(f"""
     **📊 تحليل عملية التلخيص:**
     
