@@ -21,6 +21,7 @@ from functools import lru_cache
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import io
 import csv
+import html
 
 # إعداد صفحة Streamlit
 st.set_page_config(
@@ -162,8 +163,8 @@ class SentimentAnalyzer:
     def __init__(self):
         self.api_loaded = False
         # استخدام الروابط الجديدة المحدثة
-        self.sentiment_api_url = "https://router.huggingface.co/hf-inference/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment"
-        self.summarization_api_url = "https://router.huggingface.co/hf-inference/models/csebuetnlp/mT5_multilingual_XLSum"
+        self.sentiment_api_url = "https://api-inference.huggingface.co/models/CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment"
+        self.summarization_api_url = "https://api-inference.huggingface.co/models/csebuetnlp/mT5_multilingual_XLSum"
         self.api_token = None
         self.wait_for_model = True
         self.logger = setup_logging()
@@ -319,9 +320,21 @@ class SentimentAnalyzer:
                 error_msg = self.error_handler.handle_api_error(result, "تحليل المشاعر")
                 return f"خطأ: {error_msg}", "❌", "#dc3545", 0
 
+            # معالجة الاستجابة بشكل أكثر قوة
             if isinstance(result, list) and len(result) > 0:
-                sentiment_label = result[0]['label']
-                confidence = result[0]['score'] * 100
+                # الحصول على أول عنصر في القائمة
+                first_item = result[0]
+                
+                # البحث عن العنصر الذي يحتوي على أعلى درجة ثقة
+                if isinstance(first_item, list):
+                    # إذا كان العنصر الأول نفسه قائمة (هيكل متداخل)
+                    best_item = max(first_item, key=lambda x: x.get('score', 0))
+                    sentiment_label = best_item.get('label', '')
+                    confidence = best_item.get('score', 0) * 100
+                else:
+                    # الهيكل العادي
+                    sentiment_label = first_item.get('label', '')
+                    confidence = first_item.get('score', 0) * 100
                 
                 sentiment_map = {
                     'positive': ('إيجابي', '😊', '#28a745'),
@@ -374,8 +387,20 @@ class SentimentAnalyzer:
                 error_msg = self.error_handler.handle_api_error(result, "تلخيص النص")
                 return f"خطأ: {error_msg}", 0
 
+            # معالجة استجابة التلخيص بشكل أكثر قوة
             if isinstance(result, list) and len(result) > 0:
-                summary = result[0]['summary_text']
+                summary_item = result[0]
+                
+                # استخراج النص الملخص من الهيكل
+                if isinstance(summary_item, dict):
+                    summary = summary_item.get('summary_text', '')
+                else:
+                    summary = str(summary_item)
+                
+                # إذا كان الملخص فارغاً، نعيد رسالة خطأ
+                if not summary.strip():
+                    return "لم يتم إنشاء ملخص للنص", 0
+                    
                 compression_ratio = (1 - len(summary) / len(text)) * 100
                 
                 self.logger.info(f"تلخيص ناجح: نسبة الضغط {compression_ratio:.1f}%")
@@ -1197,7 +1222,7 @@ def render_text_summarization():
                         text_input, max_length, min_length
                     )
                     
-                    if not summary.startswith("خطأ") and not summary.startswith("النص قصير"):
+                    if not summary.startswith("خطأ") and not summary.startswith("النص قصير") and not summary.startswith("لم يتم"):
                         st.session_state.last_summary = {
                             'original_text': text_input,
                             'summary': summary,
@@ -1226,6 +1251,9 @@ def display_sentiment_result(sentiment, emoji, color, confidence, text_input):
         'محايد': 'sentiment-neutral'
     }.get(sentiment, 'result-card')
     
+    # تهريب النص لتجنب مشاكل HTML
+    text_input_escaped = html.escape(text_input)
+    
     st.markdown(f"""
     <div class="result-card {sentiment_class}">
         <div style="text-align: center; margin-bottom: 20px;">
@@ -1245,7 +1273,7 @@ def display_sentiment_result(sentiment, emoji, color, confidence, text_input):
         
         <div style="background: white; padding: 15px; border-radius: 8px;">
             <strong>📄 النص المدخل:</strong><br>
-            {text_input}
+            {text_input_escaped}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1278,6 +1306,9 @@ def display_sentiment_result(sentiment, emoji, color, confidence, text_input):
 
 def display_summary_result(summary, compression_ratio, original_text, original_length, summary_length):
     """عرض نتيجة التلخيص"""
+    # تهريب النص الملخص لتجنب مشاكل HTML
+    summary_escaped = html.escape(summary)
+    
     st.markdown(f"""
     <div class="summary-card">
         <div style="text-align: center; margin-bottom: 20px;">
@@ -1287,7 +1318,7 @@ def display_summary_result(summary, compression_ratio, original_text, original_l
         <div style="background: white; padding: 15px; border-radius: 8px; margin: 15px 0;">
             <h4 style="color: #2196f3; margin-bottom: 10px;">📋 الملخص الذكي:</h4>
             <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-right: 3px solid #2196f3;">
-                {summary}
+                {summary_escaped}
             </div>
         </div>
         
